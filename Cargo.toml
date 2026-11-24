@@ -1,0 +1,70 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/sdkwork-miniprogram-execution-engine",
+    "crates/sdkwork-miniprogram-package-loader",
+    "crates/sdkwork-miniprogram-v8-adapter",
+    "crates/sdkwork-miniprogram-wxml-compiler",
+    "crates/sdkwork-miniprogram-runtime-cli",
+]
+default-members = [
+    "crates/sdkwork-miniprogram-execution-engine",
+    "crates/sdkwork-miniprogram-package-loader",
+    "crates/sdkwork-miniprogram-v8-adapter",
+    "crates/sdkwork-miniprogram-wxml-compiler",
+    "crates/sdkwork-miniprogram-runtime-cli",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+version = "0.1.0"
+license = "MIT"
+repository = "https://github.com/sdkwork-ai/sdkwork-miniprogram-runtime"
+
+[workspace.dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+thiserror = "2.0.17"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+v8 = "152.2.0"
+zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+rust_2024_compatibility = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_qualifications = "warn"
+variant_size_differences = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+exit = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+large_enum_variant = "warn"
+needless_pass_by_value = "warn"
+must_use_candidate = "warn"
+module_name_repetitions = "allow"
+cast_possible_truncation = "warn"
+cast_lossless = "warn"
+
+[profile.dev]
+overflow-checks = true
+
+[profile.release]
+overflow-checks = true

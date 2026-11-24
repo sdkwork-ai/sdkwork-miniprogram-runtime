@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "sdkwork.component.spec",
+  "component": {
+    "name": "sdkwork-miniprogram-v8-adapter",
+    "displayName": "SDKWORK Mini Program V8 Adapter",
+    "version": "0.1.0",
+    "type": "rust-crate",
+    "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-v8-adapter",
+    "domain": "mini-program-runtime",
+    "capability": "isolated-javascript-evaluation",
+    "languages": ["rust"],
+    "generated": false,
+    "manifests": ["Cargo.toml", "specs/component.spec.json"]
+  },
+  "canonicalSpecs": [
+    { "file": "RUST_CODE_SPEC.md", "path": "../../../../sdkwork-specs/RUST_CODE_SPEC.md", "purpose": "Rust crate and fallible API standards." },
+    { "file": "DEPENDENCY_MANAGEMENT_SPEC.md", "path": "../../../../sdkwork-specs/DEPENDENCY_MANAGEMENT_SPEC.md", "purpose": "Cargo dependency and supply-chain authority." },
+    { "file": "SECURITY_SPEC.md", "path": "../../../../sdkwork-specs/SECURITY_SPEC.md", "purpose": "JavaScript execution isolation and security boundaries." },
+    { "file": "TEST_SPEC.md", "path": "../../../../sdkwork-specs/TEST_SPEC.md", "purpose": "V8 execution and error mapping verification." }
+  ],
+  "contracts": {
+    "layerRole": "runtime-engine-adapter",
+    "publicExports": ["evaluate", "evaluate_with_limit", "V8Error", "Result"],
+    "providedPorts": [{ "name": "javascriptEvaluation", "export": "evaluate" }],
+    "requiredPorts": [],
+    "runtimeEntrypoints": ["evaluate", "evaluate_with_limit"],
+    "routeManifest": null,
+    "sdkClients": [],
+    "sdkDependencies": [],
+    "dependencyApiExports": [],
+    "dependencyApiSurfaces": [],
+    "events": [],
+    "configKeys": ["DEFAULT_MAX_SOURCE_BYTES"]
+  },
+  "verification": {
+    "commands": ["cargo test -p sdkwork-miniprogram-v8-adapter", "cargo clippy -p sdkwork-miniprogram-v8-adapter --all-targets -- -D warnings"]
+  }
+}

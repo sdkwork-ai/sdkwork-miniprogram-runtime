@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "sdkwork.component.spec",
+  "component": {
+    "name": "sdkwork-miniprogram-package-loader",
+    "domain": "runtime",
+    "capability": "mini-program-package-loading",
+    "root": "sdkwork-miniprogram-runtime"
+  },
+  "contracts": {
+    "layerRole": "runtime-package-loader",
+    "globalStandards": [
+      "../../../../sdkwork-specs/RUST_CODE_SPEC.md",
+      "../../../../sdkwork-specs/DEPENDENCY_MANAGEMENT_SPEC.md",
+      "../../../../sdkwork-specs/SECURITY_SPEC.md"
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "kind": "sdkwork.component.spec",
+  "component": {
+    "name": "sdkwork-miniprogram-wxml-compiler",
+    "displayName": "SDKWork Mini Program WXML Compiler",
+    "version": "0.1.0",
+    "type": "rust-crate",
+    "root": "crates/sdkwork-miniprogram-wxml-compiler",
+    "domain": "runtime",
+    "capability": "wxml",
+    "surface": "host-native",
+    "languages": ["rust"],
+    "generated": false,
+    "manifests": ["Cargo.toml"]
+  },
+  "canonicalSpecs": [
+    {
+      "file": "RUST_CODE_SPEC.md",
+      "path": "../../../sdkwork-specs/RUST_CODE_SPEC.md",
+      "purpose": "Rust crate structure and implementation conventions."
+    },
+    {
+      "file": "COMPONENT_SPEC.md",
+      "path": "../../../sdkwork-specs/COMPONENT_SPEC.md",
+      "purpose": "Module-local machine-readable contract requirements."
+    }
+  ],
+  "contracts": {
+    "layerRole": "runtime-composition",
+    "publicExports": ["parse", "Document", "Node", "Element", "Attribute", "Diagnostic"],
+    "runtimeEntrypoints": [],
+    "routeManifest": null,
+    "sdkClients": [],
+    "sdkDependencies": [],
+    "dependencyApiExports": [],
+    "dependencyApiSurfaces": [],
+    "events": [],
+    "configKeys": []
+  },
+  "verification": {
+      "commands": ["cargo test -p sdkwork-miniprogram-wxml-compiler", "cargo clippy -p sdkwork-miniprogram-wxml-compiler --all-targets -- -D warnings"]
+  },
+  "notes": {
+    "scope": "Parses WXML document structure, element attributes, text and balanced interpolation boundaries. Expression execution and full WeChat compatibility remain outside this crate's current implementation."
+  }
+}

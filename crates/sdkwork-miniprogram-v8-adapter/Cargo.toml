@@ -1,0 +1,18 @@
+[package]
+name = "sdkwork-miniprogram-v8-adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "One-shot isolated JavaScript execution using the V8 Rust bindings"
+
+[lib]
+name = "sdkwork_miniprogram_v8_adapter"
+path = "src/lib.rs"
+
+[dependencies]
+v8.workspace = true
+
+[lints]
+workspace = true
