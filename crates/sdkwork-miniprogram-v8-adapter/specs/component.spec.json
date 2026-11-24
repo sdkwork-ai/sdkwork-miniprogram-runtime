@@ -8,7 +8,7 @@
     "type": "rust-crate",
     "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-v8-adapter",
     "domain": "mini-program-runtime",
-    "capability": "isolated-javascript-evaluation",
+    "capability": "isolated-one-shot-and-persistent-javascript-evaluation",
     "languages": ["rust"],
     "generated": false,
     "manifests": ["Cargo.toml", "specs/component.spec.json"]
@@ -20,11 +20,11 @@
     { "file": "TEST_SPEC.md", "path": "../../../sdkwork-specs/TEST_SPEC.md", "purpose": "V8 execution and error mapping verification." }
   ],
   "contracts": {
-    "layerRole": "runtime-engine-adapter",
-    "publicExports": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "V8Error", "Result"],
-    "providedPorts": [{ "name": "javascriptEvaluation", "export": "evaluate" }],
+    "layerRole": "runtime-composition",
+    "publicExports": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext", "V8Error", "Result", "DEFAULT_MAX_SOURCE_BYTES", "DEFAULT_MAX_HEAP_BYTES", "DEFAULT_TIMEOUT"],
+    "providedPorts": [{ "name": "javascriptEvaluation", "export": "evaluate" }, { "name": "persistentJavascriptContext", "export": "JavaScriptContext" }],
     "requiredPorts": [],
-    "runtimeEntrypoints": ["evaluate", "evaluate_with_limit", "evaluate_with_options"],
+    "runtimeEntrypoints": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext::new", "JavaScriptContext::evaluate"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],

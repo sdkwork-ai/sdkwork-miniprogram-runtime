@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tracing::info;
 
 use crate::{
@@ -117,7 +118,17 @@ impl Runtime {
                 .max_storage_entries_per_application,
             self.inner.config.resource_budget.max_storage_value_bytes,
         );
-        let handle = ApplicationHandle::new(manifest, storage);
+        let handle = ApplicationHandle::new(
+            manifest,
+            storage,
+            self.inner.config.resource_budget.max_pages_per_application,
+            self.inner
+                .config
+                .resource_budget
+                .max_javascript_source_bytes,
+            self.inner.config.resource_budget.max_javascript_heap_bytes,
+            Duration::from_millis(self.inner.config.resource_budget.javascript_timeout_ms),
+        );
         applications.insert(app_id, handle.clone());
         info!(app_id = %handle.app_id(), page_count, "application loaded");
         Ok(handle)

@@ -1,5 +1,8 @@
 use crate::{
-    ast::{Attribute, AttributeValue, BindingKind, Document, Element, Node, Span, ValuePart},
+    ast::{
+        Attribute, AttributeValue, BindingKind, ConditionalDirectiveKind, Document, Element,
+        ElementDirective, Node, Span, ValuePart,
+    },
     diagnostic::{Diagnostic, DiagnosticKind, ParseResult},
 };
 
@@ -98,6 +101,7 @@ impl<'a> Parser<'a> {
             if self.consume_str("/>") {
                 return Ok(Element {
                     tag_name,
+                    directives: parse_directives(&attributes, &self.file)?,
                     attributes,
                     children: Vec::new(),
                     span: self.span(start, self.offset),
@@ -108,6 +112,7 @@ impl<'a> Parser<'a> {
                 let children = self.parse_children(Some(&tag_name))?;
                 return Ok(Element {
                     tag_name,
+                    directives: parse_directives(&attributes, &self.file)?,
                     attributes,
                     children,
                     span: self.span(start, self.offset),
@@ -383,6 +388,219 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn parse_directives(attributes: &[Attribute], file: &str) -> ParseResult<Vec<ElementDirective>> {
+    let mut conditional = None;
+    let mut loop_attribute: Option<&Attribute> = None;
+    let mut loop_item: Option<&Attribute> = None;
+    let mut loop_index: Option<&Attribute> = None;
+    let mut loop_key: Option<&Attribute> = None;
+
+    for attribute in attributes {
+        match attribute.name.as_str() {
+            "wx:if" | "wx:elif" | "wx:else" => {
+                if conditional.is_some() {
+                    return Err(invalid_directive(
+                        file,
+                        attribute,
+                        "an element can have only one of wx:if, wx:elif, or wx:else",
+                    ));
+                }
+                conditional = Some(parse_conditional(attribute, file)?);
+            }
+            "wx:for" => {
+                assign_directive(&mut loop_attribute, attribute, file)?;
+            }
+            "wx:for-item" => {
+                assign_directive(&mut loop_item, attribute, file)?;
+            }
+            "wx:for-index" => {
+                assign_directive(&mut loop_index, attribute, file)?;
+            }
+            "wx:key" => {
+                assign_directive(&mut loop_key, attribute, file)?;
+            }
+            _ => {}
+        }
+    }
+
+    let mut directives = Vec::with_capacity(2);
+    if let Some(for_each) = parse_for_each(loop_attribute, loop_item, loop_index, loop_key, file)? {
+        directives.push(for_each);
+    }
+    if let Some(conditional) = conditional {
+        directives.push(conditional);
+    }
+    Ok(directives)
+}
+
+fn assign_directive<'a>(
+    slot: &mut Option<&'a Attribute>,
+    attribute: &'a Attribute,
+    file: &str,
+) -> ParseResult<()> {
+    if slot.replace(attribute).is_some() {
+        return Err(invalid_directive(
+            file,
+            attribute,
+            &format!("duplicate {} directive", attribute.name),
+        ));
+    }
+    Ok(())
+}
+
+fn parse_conditional(attribute: &Attribute, file: &str) -> ParseResult<ElementDirective> {
+    let (kind, expression) = match (attribute.name.as_str(), &attribute.value) {
+        ("wx:else", AttributeValue::Boolean) => (ConditionalDirectiveKind::Else, None),
+        ("wx:if", AttributeValue::Expression(expression)) => {
+            if expression.trim().is_empty() {
+                return Err(invalid_directive(
+                    file,
+                    attribute,
+                    "wx:if expression must not be empty",
+                ));
+            }
+            (ConditionalDirectiveKind::If, Some(expression.clone()))
+        }
+        ("wx:elif", AttributeValue::Expression(expression)) => {
+            if expression.trim().is_empty() {
+                return Err(invalid_directive(
+                    file,
+                    attribute,
+                    "wx:elif expression must not be empty",
+                ));
+            }
+            (ConditionalDirectiveKind::ElseIf, Some(expression.clone()))
+        }
+        ("wx:else", _) => {
+            return Err(invalid_directive(
+                file,
+                attribute,
+                "wx:else does not accept a value",
+            ));
+        }
+        (_, AttributeValue::Boolean) => {
+            return Err(invalid_directive(
+                file,
+                attribute,
+                "conditional directive requires one {{ expression }} value",
+            ));
+        }
+        _ => {
+            return Err(invalid_directive(
+                file,
+                attribute,
+                "conditional directive value must be exactly one {{ expression }}",
+            ));
+        }
+    };
+    Ok(ElementDirective::Conditional {
+        kind,
+        expression,
+        span: attribute.span,
+    })
+}
+
+fn parse_for_each(
+    attribute: Option<&Attribute>,
+    item_attribute: Option<&Attribute>,
+    index_attribute: Option<&Attribute>,
+    key_attribute: Option<&Attribute>,
+    file: &str,
+) -> ParseResult<Option<ElementDirective>> {
+    let Some(attribute) = attribute else {
+        if let Some(attribute) = item_attribute.or(index_attribute).or(key_attribute) {
+            return Err(invalid_directive(
+                file,
+                attribute,
+                "wx:for-item, wx:for-index, and wx:key require wx:for",
+            ));
+        }
+        return Ok(None);
+    };
+    let AttributeValue::Expression(expression) = &attribute.value else {
+        return Err(invalid_directive(
+            file,
+            attribute,
+            "wx:for requires one {{ expression }} collection value",
+        ));
+    };
+    if expression.trim().is_empty() {
+        return Err(invalid_directive(
+            file,
+            attribute,
+            "wx:for expression must not be empty",
+        ));
+    }
+    let item = item_attribute.map_or(Ok("item".to_owned()), |value| {
+        directive_identifier(value, "wx:for-item", file)
+    })?;
+    let index = index_attribute.map_or(Ok("index".to_owned()), |value| {
+        directive_identifier(value, "wx:for-index", file)
+    })?;
+    let key = key_attribute
+        .map(|value| directive_key(value, file))
+        .transpose()?;
+    Ok(Some(ElementDirective::ForEach {
+        expression: expression.clone(),
+        item,
+        index,
+        key,
+        span: attribute.span,
+    }))
+}
+
+fn directive_identifier(attribute: &Attribute, name: &str, file: &str) -> ParseResult<String> {
+    let AttributeValue::Literal(value) = &attribute.value else {
+        return Err(invalid_directive(
+            file,
+            attribute,
+            &format!("{name} must be a literal identifier"),
+        ));
+    };
+    if !is_identifier(value) {
+        return Err(invalid_directive(
+            file,
+            attribute,
+            &format!("{name} must be a valid identifier"),
+        ));
+    }
+    Ok(value.clone())
+}
+
+fn directive_key(attribute: &Attribute, file: &str) -> ParseResult<String> {
+    let AttributeValue::Literal(value) = &attribute.value else {
+        return Err(invalid_directive(
+            file,
+            attribute,
+            "wx:key must be a literal property name",
+        ));
+    };
+    if value == "*" || value == "*this" || is_identifier(value) {
+        return Ok(value.clone());
+    }
+    Err(invalid_directive(
+        file,
+        attribute,
+        "wx:key must be `*`, `*this`, or a valid property identifier",
+    ))
+}
+
+fn is_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    matches!(characters.next(), Some(first) if first == '_' || first == '$' || first.is_alphabetic())
+        && characters
+            .all(|character| character == '_' || character == '$' || character.is_alphanumeric())
+}
+
+fn invalid_directive(file: &str, attribute: &Attribute, message: &str) -> Diagnostic {
+    Diagnostic {
+        file: file.to_owned(),
+        kind: DiagnosticKind::InvalidDirective,
+        message: message.to_owned(),
+        span: attribute.span,
+    }
+}
+
 fn is_name_character(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | ':' | '.')
 }
@@ -545,6 +763,87 @@ mod tests {
         let document = parse("inline.wxml", "<view>{{ title }}</view>")?;
         let serialized = serde_json::to_value(document)?;
         assert_eq!(serialized["children"][0]["Element"]["tag_name"], "view");
+        Ok(())
+    }
+
+    #[test]
+    fn parses_conditional_and_loop_directives_with_source_spans()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let document = parse(
+            "pages/list.wxml",
+            "<view wx:if=\"{{ready}}\"/><view wx:for=\"{{items}}\" wx:for-item=\"row\" wx:for-index=\"position\" wx:key=\"id\"/> <view wx:else/>",
+        )?;
+        let Node::Element(conditional) = &document.children[0] else {
+            return Err("expected conditional element".into());
+        };
+        assert!(matches!(
+            &conditional.directives[..],
+            [ElementDirective::Conditional {
+                kind: ConditionalDirectiveKind::If,
+                expression: Some(expression),
+                span,
+            }] if expression == "ready" && span.line == 1
+        ));
+
+        let Node::Element(loop_element) = &document.children[1] else {
+            return Err("expected loop element".into());
+        };
+        assert!(matches!(
+            &loop_element.directives[..],
+            [ElementDirective::ForEach {
+                expression,
+                item,
+                index,
+                key,
+                ..
+            }] if expression == "items" && item == "row" && index == "position" && key.as_deref() == Some("id")
+        ));
+
+        let Node::Element(otherwise) = &document.children[3] else {
+            return Err("expected else element".into());
+        };
+        assert!(matches!(
+            &otherwise.directives[..],
+            [ElementDirective::Conditional {
+                kind: ConditionalDirectiveKind::Else,
+                expression: None,
+                ..
+            }]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_malformed_and_conflicting_directives_with_their_source_location()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "<view wx:if=\"ready\"/>",
+            "<view wx:if=\"{{ }}\"/>",
+            "<view wx:for=\"{{ }}\"/>",
+            "<view wx:else=\"{{ready}}\"/>",
+            "<view wx:for-item=\"row\"/>",
+            "<view wx:for=\"{{items}}\" wx:for-item=\"not-valid\"/>",
+            "<view wx:if=\"{{a}}\" wx:else/>",
+        ] {
+            let Err(diagnostic) = parse("pages/broken.wxml", source) else {
+                return Err(format!("invalid directive source was accepted: {source}").into());
+            };
+            assert_eq!(diagnostic.file, "pages/broken.wxml");
+            assert_eq!(diagnostic.kind, DiagnosticKind::InvalidDirective);
+            assert!(diagnostic.span.start < diagnostic.span.end);
+        }
+
+        let document = parse(
+            "pages/list.wxml",
+            "<view wx:for=\"{{rows}}\" wx:key=\"*this\"/>",
+        )?;
+        let Node::Element(element) = &document.children[0] else {
+            return Err("expected list element".into());
+        };
+        assert!(matches!(
+            &element.directives[..],
+            [ElementDirective::ForEach { key: Some(key), .. }] if key == "*this"
+        ));
         Ok(())
     }
 }

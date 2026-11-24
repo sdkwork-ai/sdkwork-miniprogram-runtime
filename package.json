@@ -1,0 +1,9 @@
+{
+  "name": "sdkwork-miniprogram-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "verify": "cargo audit && cargo deny check && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace"
+  }
+}

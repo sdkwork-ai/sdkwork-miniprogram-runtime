@@ -22,6 +22,8 @@ pub enum DiagnosticKind {
     UnterminatedString,
     /// Interpolation did not contain balanced closing delimiters.
     UnterminatedInterpolation,
+    /// A recognized WXML control-flow directive has an invalid or conflicting value.
+    InvalidDirective,
     /// Closing tag appeared outside any element.
     UnexpectedClosingTag,
     /// Closing tag did not match the open element.

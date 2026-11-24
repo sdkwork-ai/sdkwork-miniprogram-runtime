@@ -19,13 +19,14 @@
     { "file": "SECURITY_SPEC.md", "path": "../../../sdkwork-specs/SECURITY_SPEC.md", "purpose": "No fabricated host capability behavior." }
   ],
   "contracts": {
-    "layerRole": "runtime-cli",
+    "layerRole": "tooling",
     "publicExports": [],
     "providedPorts": [],
     "requiredPorts": [
       { "name": "applicationLifecycle", "export": "sdkwork-miniprogram-execution-engine", "provider": "sdkwork-miniprogram-execution-engine" },
       { "name": "projectLoading", "export": "sdkwork-miniprogram-package-loader", "provider": "sdkwork-miniprogram-package-loader" },
       { "name": "wxmlParsing", "export": "sdkwork-miniprogram-wxml-compiler", "provider": "sdkwork-miniprogram-wxml-compiler" },
+      { "name": "headlessStructure", "export": "sdkwork-miniprogram-headless-renderer", "provider": "sdkwork-miniprogram-headless-renderer" },
       { "name": "headlessStructure", "export": "sdkwork-miniprogram-headless-renderer", "provider": "sdkwork-miniprogram-headless-renderer" },
       { "name": "javascriptEvaluation", "export": "sdkwork-miniprogram-v8-adapter", "provider": "sdkwork-miniprogram-v8-adapter" }
     ],

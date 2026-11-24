@@ -1,5 +1,7 @@
+use sdkwork_miniprogram_v8_adapter::JavaScriptContext;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tracing::info;
 
 use crate::{ApplicationStorage, Result, RuntimeError};
@@ -62,6 +64,16 @@ impl ApplicationManifest {
                 reason: "must name one of the registered pages".to_owned(),
             });
         }
+        let entry_page = self.entry_page.replace('\\', "/");
+        if unique_pages
+            .iter()
+            .all(|page| page.replace('\\', "/") != entry_page)
+        {
+            return Err(RuntimeError::InvalidManifest {
+                field: "entry_page",
+                reason: "must use the same normalized route as a registered page".to_owned(),
+            });
+        }
         Ok(())
     }
 }
@@ -96,8 +108,19 @@ pub enum ApplicationState {
 #[derive(Debug)]
 pub(crate) struct ApplicationInner {
     pub manifest: ApplicationManifest,
-    state: Mutex<ApplicationState>,
+    state: Mutex<ApplicationRuntimeState>,
     pub storage: ApplicationStorage,
+    max_page_stack_depth: usize,
+    max_javascript_source_bytes: usize,
+    max_javascript_heap_bytes: usize,
+    javascript_timeout: Duration,
+}
+
+#[derive(Debug)]
+struct ApplicationRuntimeState {
+    lifecycle: ApplicationState,
+    page_stack: Option<Vec<String>>,
+    javascript: Option<JavaScriptContext>,
 }
 
 /// Handle to one application context. Its storage and lifecycle are isolated from other apps.
@@ -107,12 +130,27 @@ pub struct ApplicationHandle {
 }
 
 impl ApplicationHandle {
-    pub(crate) fn new(manifest: ApplicationManifest, storage: ApplicationStorage) -> Self {
+    pub(crate) fn new(
+        manifest: ApplicationManifest,
+        storage: ApplicationStorage,
+        max_page_stack_depth: usize,
+        max_javascript_source_bytes: usize,
+        max_javascript_heap_bytes: usize,
+        javascript_timeout: Duration,
+    ) -> Self {
         Self {
             inner: Arc::new(ApplicationInner {
+                state: Mutex::new(ApplicationRuntimeState {
+                    lifecycle: ApplicationState::Loaded,
+                    page_stack: None,
+                    javascript: None,
+                }),
                 manifest,
-                state: Mutex::new(ApplicationState::Loaded),
                 storage,
+                max_page_stack_depth,
+                max_javascript_source_bytes,
+                max_javascript_heap_bytes,
+                javascript_timeout,
             }),
         }
     }
@@ -137,7 +175,7 @@ impl ApplicationHandle {
         self.inner
             .state
             .lock()
-            .map(|state| *state)
+            .map(|state| state.lifecycle)
             .map_err(|_| RuntimeError::LockPoisoned {
                 resource: "application state",
             })
@@ -147,6 +185,58 @@ impl ApplicationHandle {
     #[must_use]
     pub fn storage(&self) -> ApplicationStorage {
         self.inner.storage.clone()
+    }
+
+    /// Evaluate JavaScript in this application's persistent, isolated V8 context.
+    ///
+    /// The context is created on first use and remains available through reloads. It is
+    /// released when the application is unloaded or destroyed.
+    ///
+    /// # Errors
+    /// Returns an error when the app is not active, V8 initialization/evaluation fails,
+    /// the execution deadline expires, or the application state lock is poisoned.
+    pub fn evaluate_javascript(&self, source: &str) -> Result<String> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application state",
+            })?;
+        if !matches!(
+            state.lifecycle,
+            ApplicationState::Loaded
+                | ApplicationState::Launched
+                | ApplicationState::Visible
+                | ApplicationState::Hidden
+        ) {
+            return Err(RuntimeError::InvalidState {
+                app_id: self.app_id().to_owned(),
+                state: format!("{:?}", state.lifecycle),
+                operation: "evaluate_javascript",
+            });
+        }
+        let context = match &mut state.javascript {
+            Some(context) => context,
+            None => {
+                let context = JavaScriptContext::with_options(
+                    self.inner.max_javascript_source_bytes,
+                    self.inner.max_javascript_heap_bytes,
+                    self.inner.javascript_timeout,
+                )
+                .map_err(|reason| RuntimeError::JavaScriptExecution {
+                    app_id: self.app_id().to_owned(),
+                    reason,
+                })?;
+                state.javascript.insert(context)
+            }
+        };
+        context
+            .evaluate(source)
+            .map_err(|reason| RuntimeError::JavaScriptExecution {
+                app_id: self.app_id().to_owned(),
+                reason,
+            })
     }
 
     /// Transition a loaded application to its launched state.
@@ -236,6 +326,162 @@ impl ApplicationHandle {
         )
     }
 
+    /// Return a snapshot of the current registered page stack.
+    ///
+    /// # Errors
+    /// Returns [`RuntimeError::LockPoisoned`] if the application state lock is poisoned.
+    pub fn page_stack(&self) -> Result<Vec<String>> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application state",
+            })?;
+        Ok(state.page_stack.clone().unwrap_or_default())
+    }
+
+    /// Push a registered page onto this application's page stack.
+    ///
+    /// The stack is bounded by the runtime's `max_pages_per_application` resource limit.
+    ///
+    /// # Errors
+    /// Returns an error when the route is unregistered, navigation is not available in the
+    /// current lifecycle state, the stack limit is reached, or the state lock is poisoned.
+    pub fn navigate_to(&self, route: &str) -> Result<String> {
+        self.navigate(
+            route,
+            self.inner.max_page_stack_depth,
+            NavigationOperation::Push,
+        )
+    }
+
+    /// Replace the current page with another registered page, preserving pages beneath it.
+    ///
+    /// # Errors
+    /// Returns an error when the route is unregistered, navigation is not available in the
+    /// current lifecycle state, the stack is empty, or the state lock is poisoned.
+    pub fn redirect_to(&self, route: &str) -> Result<String> {
+        self.navigate(route, 0, NavigationOperation::Replace)
+    }
+
+    /// Pop `delta` pages and return the newly current route.
+    ///
+    /// # Errors
+    /// Returns an error for a zero delta, an unregistered lifecycle state, a delta that exceeds
+    /// the available back stack, or a poisoned state lock.
+    pub fn navigate_back(&self, delta: usize) -> Result<String> {
+        let mut state = self.lock_navigable_state("navigate_back")?;
+        if delta == 0 {
+            return Err(RuntimeError::NavigationFailed {
+                app_id: self.app_id().to_owned(),
+                reason: NavigationFailure::InvalidDelta,
+            });
+        }
+        let page_stack =
+            state
+                .page_stack
+                .as_mut()
+                .ok_or_else(|| RuntimeError::NavigationFailed {
+                    app_id: self.app_id().to_owned(),
+                    reason: NavigationFailure::EmptyPageStack,
+                })?;
+        let available = page_stack.len().saturating_sub(1);
+        if delta > available {
+            return Err(RuntimeError::NavigationFailed {
+                app_id: self.app_id().to_owned(),
+                reason: NavigationFailure::InsufficientPages {
+                    requested: delta,
+                    available,
+                },
+            });
+        }
+        let next_length = page_stack.len() - delta;
+        page_stack.truncate(next_length);
+        page_stack
+            .last()
+            .cloned()
+            .ok_or_else(|| RuntimeError::NavigationFailed {
+                app_id: self.app_id().to_owned(),
+                reason: NavigationFailure::InsufficientPages {
+                    requested: delta,
+                    available,
+                },
+            })
+    }
+
+    fn navigate(
+        &self,
+        route: &str,
+        max_stack_depth: usize,
+        operation: NavigationOperation,
+    ) -> Result<String> {
+        if !self.inner.manifest.pages.iter().any(|page| page == route) {
+            return Err(RuntimeError::NavigationFailed {
+                app_id: self.app_id().to_owned(),
+                reason: NavigationFailure::RouteNotRegistered {
+                    route: route.to_owned(),
+                },
+            });
+        }
+        let mut state = self.lock_navigable_state(operation.as_str())?;
+        let page_stack =
+            state
+                .page_stack
+                .as_mut()
+                .ok_or_else(|| RuntimeError::NavigationFailed {
+                    app_id: self.app_id().to_owned(),
+                    reason: NavigationFailure::EmptyPageStack,
+                })?;
+        match operation {
+            NavigationOperation::Push => {
+                if page_stack.len() >= max_stack_depth {
+                    return Err(RuntimeError::NavigationFailed {
+                        app_id: self.app_id().to_owned(),
+                        reason: NavigationFailure::StackLimitReached {
+                            limit: max_stack_depth,
+                        },
+                    });
+                }
+                page_stack.push(route.to_owned());
+            }
+            NavigationOperation::Replace => {
+                let Some(current) = page_stack.last_mut() else {
+                    return Err(RuntimeError::NavigationFailed {
+                        app_id: self.app_id().to_owned(),
+                        reason: NavigationFailure::EmptyPageStack,
+                    });
+                };
+                route.clone_into(current);
+            }
+        }
+        Ok(route.to_owned())
+    }
+
+    fn lock_navigable_state(
+        &self,
+        operation: &'static str,
+    ) -> Result<std::sync::MutexGuard<'_, ApplicationRuntimeState>> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application state",
+            })?;
+        if !matches!(
+            state.lifecycle,
+            ApplicationState::Launched | ApplicationState::Visible | ApplicationState::Hidden
+        ) {
+            return Err(RuntimeError::InvalidState {
+                app_id: self.app_id().to_owned(),
+                state: format!("{:?}", state.lifecycle),
+                operation,
+            });
+        }
+        Ok(state)
+    }
+
     fn transition(
         &self,
         operation: &'static str,
@@ -249,15 +495,15 @@ impl ApplicationHandle {
             .map_err(|_| RuntimeError::LockPoisoned {
                 resource: "application state",
             })?;
-        if *state == ApplicationState::Destroyed {
+        if state.lifecycle == ApplicationState::Destroyed {
             return Err(RuntimeError::ApplicationDestroyed {
                 app_id: self.app_id().to_owned(),
             });
         }
-        if !allowed.contains(&state) {
+        if !allowed.contains(&state.lifecycle) {
             return Err(RuntimeError::InvalidState {
                 app_id: self.app_id().to_owned(),
-                state: format!("{state:?}"),
+                state: format!("{:?}", state.lifecycle),
                 operation,
             });
         }
@@ -266,8 +512,17 @@ impl ApplicationHandle {
             ApplicationState::Unloaded | ApplicationState::Destroyed
         ) {
             self.inner.storage.close()?;
+            state.page_stack = None;
+        } else if next == ApplicationState::Launched {
+            state.page_stack = Some(vec![self.inner.manifest.entry_page.clone()]);
         }
-        *state = next;
+        if matches!(
+            next,
+            ApplicationState::Unloaded | ApplicationState::Destroyed
+        ) {
+            state.javascript = None;
+        }
+        state.lifecycle = next;
         info!(
             app_id = %self.app_id(),
             operation,
@@ -276,4 +531,45 @@ impl ApplicationHandle {
         );
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NavigationOperation {
+    Push,
+    Replace,
+}
+
+impl NavigationOperation {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Push => "navigate_to",
+            Self::Replace => "redirect_to",
+        }
+    }
+}
+
+/// A typed explanation for a rejected page-navigation operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NavigationFailure {
+    /// The requested route does not appear in the application manifest.
+    RouteNotRegistered {
+        /// Route requested by the caller.
+        route: String,
+    },
+    /// The configured maximum page-stack depth has been reached.
+    StackLimitReached {
+        /// Maximum stack depth allowed by this runtime.
+        limit: usize,
+    },
+    /// The requested back-navigation delta cannot be satisfied.
+    InsufficientPages {
+        /// Number of pages requested to pop.
+        requested: usize,
+        /// Number of pages currently available to pop.
+        available: usize,
+    },
+    /// Page-stack navigation requires a positive delta.
+    InvalidDelta,
+    /// The page stack has been cleared or is otherwise empty.
+    EmptyPageStack,
 }

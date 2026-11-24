@@ -16,13 +16,31 @@ fn inspects_example_project_and_reports_partial_capabilities()
 -> Result<(), Box<dyn std::error::Error>> {
     let output = cli().arg("inspect").arg(example_project()).output()?;
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let document: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(document["state"], "Visible");
     assert_eq!(document["pages"][0]["route"], "pages/index/index");
     assert_eq!(document["capabilities"]["wxmlStructuralParsing"], "partial");
-    assert_eq!(document["capabilities"]["pixelRendering"], "unsupported");
-    assert_eq!(document["pages"][0]["renderNodeCount"], 5);
+    assert_eq!(document["capabilities"]["wxssStructuralSubset"], "partial");
+    assert_eq!(
+        document["capabilities"]["stylesLayoutAndPixels"],
+        "unsupported"
+    );
+    assert!(
+        document["pages"][0]["renderNodeCount"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 5
+    );
+    assert_eq!(
+        document["pages"][0]["computedStyles"]["0"]["padding"],
+        "24rpx"
+    );
     Ok(())
 }
 

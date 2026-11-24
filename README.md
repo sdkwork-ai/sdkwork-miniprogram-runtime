@@ -2,7 +2,7 @@ repository-kind: foundation-dependency
 
 # SDKWORK Mini Program Runtime
 
-Rust implementation of an embeddable mini-program runtime. The product direction and acceptance baseline are in [the PRD](docs/product/prd/PRD.md). Current crate ownership, build and test commands are maintained in Cargo and the crate-local component contracts.
+Rust implementation of an embeddable mini-program runtime. The product direction and acceptance baseline are in [the PRD](docs/product/prd/PRD.md). Current architecture is described in [the technical architecture](docs/architecture/tech/TECH_ARCHITECTURE.md), while crate ownership, build and test commands are maintained in Cargo and the crate-local component contracts.
 
 ## Active project directories
 

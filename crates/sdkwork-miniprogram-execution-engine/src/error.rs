@@ -1,3 +1,4 @@
+use crate::application::NavigationFailure;
 use std::fmt;
 
 /// Runtime failures are structured so callers can make decisions without parsing messages.
@@ -46,6 +47,20 @@ pub enum RuntimeError {
         /// Application identifier owning the released storage namespace.
         app_id: String,
     },
+    /// Page navigation could not be applied to the application's registered routes or page stack.
+    NavigationFailed {
+        /// Application identifier owning the rejected navigation.
+        app_id: String,
+        /// Typed explanation for the rejected navigation.
+        reason: NavigationFailure,
+    },
+    /// JavaScript context initialization or execution failed.
+    JavaScriptExecution {
+        /// Application identifier that owns the failed context.
+        app_id: String,
+        /// Typed engine failure rendered for diagnostics.
+        reason: sdkwork_miniprogram_v8_adapter::V8Error,
+    },
     /// A runtime synchronization primitive was poisoned.
     LockPoisoned {
         /// Runtime resource guarded by the poisoned synchronization primitive.
@@ -92,6 +107,18 @@ impl fmt::Display for RuntimeError {
             }
             Self::ApplicationStorageClosed { app_id } => {
                 write!(formatter, "storage for application `{app_id}` is closed")
+            }
+            Self::NavigationFailed { app_id, reason } => {
+                write!(
+                    formatter,
+                    "navigation failed for application `{app_id}`: {reason:?}"
+                )
+            }
+            Self::JavaScriptExecution { app_id, reason } => {
+                write!(
+                    formatter,
+                    "JavaScript execution failed for `{app_id}`: {reason}"
+                )
             }
             Self::LockPoisoned { resource } => {
                 write!(formatter, "runtime lock poisoned for {resource}")

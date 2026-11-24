@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
@@ -8,6 +9,22 @@ use crate::error::{Diagnostic, DiagnosticKind, LoaderError, LoaderResult};
 
 const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PAGE_COUNT: usize = 10_000;
+const MAX_RESOURCE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_TOTAL_RESOURCE_BYTES: u64 = 512 * 1024 * 1024;
+
+fn read_limited_file(path: &Path, max_bytes: u64) -> LoaderResult<Vec<u8>> {
+    let file = File::open(path).map_err(|error| LoaderError::io(path, error))?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| LoaderError::io(path, error))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_bytes {
+        return Err(LoaderError::ProjectLimit(format!(
+            "resource exceeds the {max_bytes}-byte limit"
+        )));
+    }
+    Ok(bytes)
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,12 +102,39 @@ impl MiniProgramProject {
                     std::io::Error::from(std::io::ErrorKind::NotFound),
                 )
             })?;
-        fs::read(&path).map_err(|error| LoaderError::io(path, error))
+        read_limited_file(&path, MAX_RESOURCE_FILE_BYTES)
     }
 }
 
 type ProjectRoutes = Vec<(PathBuf, PathBuf)>;
 type ResolvedProjectFiles = (PathBuf, Option<PathBuf>, Vec<PageDefinition>);
+
+fn account_resource(
+    root: &Path,
+    resource_path: &Path,
+    total_bytes: &mut u64,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> LoaderResult<()> {
+    let metadata =
+        fs::metadata(resource_path).map_err(|error| LoaderError::io(resource_path, error))?;
+    if metadata.len() > MAX_RESOURCE_FILE_BYTES {
+        diagnostics.push(Diagnostic {
+            kind: DiagnosticKind::ResourceLimit,
+            path: resource_path
+                .strip_prefix(root)
+                .unwrap_or(resource_path)
+                .to_path_buf(),
+            message: format!(
+                "resource is {} bytes, per-file limit is {MAX_RESOURCE_FILE_BYTES}",
+                metadata.len()
+            ),
+            line: None,
+            column: None,
+        });
+    }
+    *total_bytes = total_bytes.saturating_add(metadata.len());
+    Ok(())
+}
 
 /// Parses `app.json`, resolves source files, and rejects resources escaping the root.
 ///
@@ -132,8 +176,17 @@ fn read_manifest(root: &Path) -> LoaderResult<ProjectManifest> {
             manifest_metadata.len()
         )));
     }
-    let manifest_source = fs::read_to_string(&manifest_path)
-        .map_err(|error| LoaderError::io(&manifest_path, error))?;
+    let manifest_bytes = read_limited_file(&manifest_path, MAX_MANIFEST_BYTES)?;
+    let manifest_source =
+        String::from_utf8(manifest_bytes).map_err(|error| LoaderError::InvalidProject {
+            diagnostics: vec![Diagnostic {
+                kind: DiagnosticKind::InvalidManifest,
+                path: PathBuf::from("app.json"),
+                message: format!("manifest is not valid UTF-8: {error}"),
+                line: None,
+                column: None,
+            }],
+        })?;
     let manifest = serde_json::from_str::<ProjectManifest>(&manifest_source).map_err(|error| {
         LoaderError::InvalidProject {
             diagnostics: vec![Diagnostic {
@@ -235,6 +288,21 @@ fn resolve_project_files(root: &Path, routes: ProjectRoutes) -> LoaderResult<Res
     if let Err(diagnostic) = &app_style_path {
         diagnostics.push(diagnostic.clone());
     }
+    let mut total_resource_bytes = 0_u64;
+    for resource_path in [
+        app_script_path.as_ref().ok(),
+        app_style_path.as_ref().ok().and_then(Option::as_ref),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        account_resource(
+            root,
+            resource_path,
+            &mut total_resource_bytes,
+            &mut diagnostics,
+        )?;
+    }
     let mut pages = Vec::with_capacity(routes.len());
     for (route, relative_base) in routes {
         let page_base = relative_base.join(&route);
@@ -244,6 +312,21 @@ fn resolve_project_files(root: &Path, routes: ProjectRoutes) -> LoaderResult<Res
         let script_path = resolve_required_file(root, &script_relative, &script_relative);
         let template_path = resolve_required_file(root, &template_relative, &template_relative);
         let style_path = resolve_optional_file(root, &style_relative);
+        for resource_path in [
+            script_path.as_ref().ok(),
+            template_path.as_ref().ok(),
+            style_path.as_ref().ok().and_then(Option::as_ref),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            account_resource(
+                root,
+                resource_path,
+                &mut total_resource_bytes,
+                &mut diagnostics,
+            )?;
+        }
         if let Err(diagnostic) = &script_path {
             diagnostics.push(diagnostic.clone());
         }
@@ -266,6 +349,15 @@ fn resolve_project_files(root: &Path, routes: ProjectRoutes) -> LoaderResult<Res
                 style_path,
             });
         }
+    }
+    if total_resource_bytes > MAX_TOTAL_RESOURCE_BYTES {
+        diagnostics.push(Diagnostic {
+            kind: DiagnosticKind::ResourceLimit,
+            path: PathBuf::from("."),
+            message: format!("project resources exceed {MAX_TOTAL_RESOURCE_BYTES} bytes"),
+            line: None,
+            column: None,
+        });
     }
     if diagnostics.is_empty() {
         Ok((
@@ -391,8 +483,11 @@ fn validate_relative_path(path: &Path) -> Result<(), ()> {
         }
     }
     let value = path.to_string_lossy();
-    if value.contains('\\')
-        || value.contains(':')
+    #[cfg(not(windows))]
+    if value.contains('\\') {
+        return Err(());
+    }
+    if value.contains(':')
         || value.contains('\0')
         || value
             .split('/')
@@ -480,9 +575,8 @@ mod tests {
             r#"{"pages":["pages/home/index"],"entryPagePath":"pages/unknown/index"}"#,
         )?;
 
-        let error = match load_project(&temporary) {
-            Ok(_) => return Err("unknown entry page unexpectedly loaded".into()),
-            Err(error) => error,
+        let Err(error) = load_project(&temporary) else {
+            return Err("unknown entry page unexpectedly loaded".into());
         };
         let diagnostics = match error {
             LoaderError::InvalidProject { diagnostics } => diagnostics,
@@ -492,6 +586,25 @@ mod tests {
             diagnostic.kind == DiagnosticKind::InvalidManifest
                 && diagnostic.message.contains("entryPagePath")
         }));
+
+        fs::remove_dir_all(temporary)?;
+        Ok(())
+    }
+
+    #[test]
+    fn refuses_to_read_a_project_resource_over_the_byte_limit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = temporary_directory("resource-limit");
+        write_project(&temporary)?;
+        let project = load_project(&temporary)?;
+        let large_file = temporary.join("large-resource.bin");
+        let file = File::create(&large_file)?;
+        file.set_len(MAX_RESOURCE_FILE_BYTES.saturating_add(1))?;
+
+        let Err(error) = project.read_file("large-resource.bin") else {
+            return Err("oversized project file was read".into());
+        };
+        assert!(matches!(error, LoaderError::ProjectLimit(_)));
 
         fs::remove_dir_all(temporary)?;
         Ok(())

@@ -8,7 +8,7 @@
     "type": "rust-crate",
     "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-execution-engine",
     "domain": "mini-program-runtime",
-    "capability": "runtime-configuration-application-lifecycle-and-isolation",
+    "capability": "runtime-configuration-application-lifecycle-javascript-and-isolation",
     "languages": ["rust"],
     "generated": false,
     "manifests": ["Cargo.toml", "specs/component.spec.json"]
@@ -20,15 +20,16 @@
     { "file": "TEST_SPEC.md", "path": "../../../sdkwork-specs/TEST_SPEC.md", "purpose": "Runtime lifecycle and isolation verification." }
   ],
   "contracts": {
-    "layerRole": "runtime-core",
-    "publicExports": ["."],
+    "layerRole": "runtime-composition",
+    "publicExports": ["RuntimeBuilder", "Runtime", "ApplicationHandle", "ApplicationStorage", "NavigationFailure"],
     "providedPorts": [
       { "name": "runtimeBuilder", "export": "RuntimeBuilder" },
       { "name": "applicationLifecycle", "export": "ApplicationHandle" },
-      { "name": "applicationStorage", "export": "ApplicationStorage" }
+      { "name": "applicationStorage", "export": "ApplicationStorage" },
+      { "name": "applicationJavaScript", "export": "ApplicationHandle::evaluate_javascript" }
     ],
     "requiredPorts": [],
-    "runtimeEntrypoints": ["RuntimeBuilder::build", "Runtime::load_application", "ApplicationHandle::launch", "ApplicationHandle::show", "ApplicationHandle::hide", "Runtime::unload_application", "Runtime::destroy_application"],
+    "runtimeEntrypoints": ["RuntimeBuilder::build", "Runtime::load_application", "ApplicationHandle::launch", "ApplicationHandle::show", "ApplicationHandle::hide", "ApplicationHandle::evaluate_javascript", "ApplicationHandle::navigate_to", "ApplicationHandle::redirect_to", "ApplicationHandle::navigate_back", "Runtime::unload_application", "Runtime::destroy_application"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],

@@ -27,8 +27,10 @@
     }
   ],
   "contracts": {
-    "layerRole": "compiler",
-    "publicExports": ["parse", "Document", "Node", "Element", "Attribute", "Diagnostic"],
+    "layerRole": "runtime-composition",
+    "publicExports": ["parse", "Document", "Node", "Element", "ElementDirective", "ConditionalDirectiveKind", "Attribute", "Diagnostic"],
+    "providedPorts": [{ "name": "wxmlSyntaxTree", "export": "parse" }],
+    "requiredPorts": [],
     "providedPorts": [{ "name": "wxmlSyntaxTree", "export": "parse" }],
     "requiredPorts": [],
     "runtimeEntrypoints": ["parse"],
@@ -44,6 +46,6 @@
       "commands": ["cargo test -p sdkwork-miniprogram-wxml-compiler", "cargo clippy -p sdkwork-miniprogram-wxml-compiler --all-targets -- -D warnings"]
   },
   "notes": {
-    "scope": "Parses WXML document structure, element attributes, text and balanced interpolation boundaries. Expression execution and full WeChat compatibility remain outside this crate's current implementation."
+      "scope": "Parses WXML document structure, element attributes, text and balanced interpolation boundaries, and records source-located wx:if, wx:elif, wx:else, and wx:for directive syntax. Expression execution, directive-chain semantics, and full WeChat compatibility remain outside this crate's current implementation."
   }
 }

@@ -51,7 +51,7 @@
     }
   ],
   "contracts": {
-    "layerRole": "runtime-engine-adapter",
+    "layerRole": "runtime-composition",
     "publicExports": [
       "load_project",
       "extract_zip",

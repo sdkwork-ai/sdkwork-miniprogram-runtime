@@ -8,7 +8,10 @@ mod ast;
 mod diagnostic;
 mod parser;
 
-pub use ast::{Attribute, AttributeValue, BindingKind, Document, Element, Node, Span, ValuePart};
+pub use ast::{
+    Attribute, AttributeValue, BindingKind, ConditionalDirectiveKind, Document, Element,
+    ElementDirective, Node, Span, ValuePart,
+};
 pub use diagnostic::{Diagnostic, DiagnosticKind, ParseResult};
 
 /// Parse a WXML document into source-located structural nodes.

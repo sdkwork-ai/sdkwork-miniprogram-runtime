@@ -12,6 +12,7 @@ name = "sdkwork_miniprogram_execution_engine"
 path = "src/lib.rs"
 
 [dependencies]
+sdkwork-miniprogram-v8-adapter.workspace = true
 tracing.workspace = true
 
 [lints]

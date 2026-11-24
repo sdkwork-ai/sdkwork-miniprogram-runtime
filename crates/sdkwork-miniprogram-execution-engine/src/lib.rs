@@ -9,7 +9,9 @@ mod error;
 mod runtime;
 mod storage;
 
-pub use application::{ApplicationHandle, ApplicationManifest, ApplicationState};
+pub use application::{
+    ApplicationHandle, ApplicationManifest, ApplicationState, NavigationFailure,
+};
 pub use config::{EngineKind, LogLevel, RendererKind, ResourceBudget, RuntimeConfig};
 pub use error::{Result, RuntimeError};
 pub use runtime::{Runtime, RuntimeBuilder};

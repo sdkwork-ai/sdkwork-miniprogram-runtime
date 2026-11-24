@@ -48,12 +48,53 @@ pub struct Element {
     pub tag_name: String,
     /// Attributes in source order.
     pub attributes: Vec<Attribute>,
+    /// Recognized control-flow directives derived from the original attributes.
+    /// The source attributes remain available in `attributes` as written.
+    pub directives: Vec<ElementDirective>,
     /// Child nodes in source order.
     pub children: Vec<Node>,
     /// Source range from the opening `<` through the closing delimiter.
     pub span: Span,
     /// Whether the source used a self-closing delimiter.
     pub self_closing: bool,
+}
+
+/// Recognized structural control-flow metadata attached to an element.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ElementDirective {
+    /// Conditional branch directive. Conditions remain unevaluated source expressions.
+    Conditional {
+        /// Branch kind selected by the source attribute.
+        kind: ConditionalDirectiveKind,
+        /// Expression body, or `None` for `wx:else`.
+        expression: Option<String>,
+        /// Source range of the directive attribute.
+        span: Span,
+    },
+    /// List-rendering directive. The collection expression remains unevaluated.
+    ForEach {
+        /// Expression yielding the collection.
+        expression: String,
+        /// Bound item variable, defaulting to `item`.
+        item: String,
+        /// Bound index variable, defaulting to `index`.
+        index: String,
+        /// Key property, or `*` when the source explicitly requests index keys.
+        key: Option<String>,
+        /// Source range of the `wx:for` attribute.
+        span: Span,
+    },
+}
+
+/// Conditional branch selected by a WXML control-flow directive.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ConditionalDirectiveKind {
+    /// `wx:if` branch.
+    If,
+    /// `wx:elif` branch.
+    ElseIf,
+    /// `wx:else` branch.
+    Else,
 }
 
 /// Attribute attached to an element.

@@ -11,7 +11,7 @@ The repository owns portable Rust runtime libraries, source project/package read
 
 ## Crate direction
 
-The initial crates are organized by responsibility. The execution engine owns runtime configuration, application contexts and JavaScript engine integration. The package loader owns project metadata, resource containment and package validation. The WXML compiler owns source spans, parsing, diagnostics and an intermediate representation. The CLI composes these public surfaces for inspection and local validation. The CLI may depend on the libraries, while lower-level compiler and package crates do not depend on the CLI or engine.
+The initial crates are organized by responsibility. The execution engine owns runtime configuration, application contexts and lifecycle/storage primitives. The package loader owns project metadata, resource containment and bounded archive extraction. The WXML compiler owns source spans, parsing, diagnostics and a syntax tree. The V8 adapter owns one-shot isolated JavaScript evaluation with explicit source-size limits and a host-enforced execution deadline. The headless renderer maps parsed syntax trees into a stable structural Render Tree while preserving bindings and source spans. The CLI composes these public surfaces for inspection and local validation. The CLI may depend on the libraries, while lower-level compiler, package and renderer crates do not depend on the CLI or engine.
 
 The PRD's long-term target adds independent compatibility, renderer, provider, inspector and ABI responsibilities as their contracts mature. No crate claims whole-product compatibility solely by exposing a similarly named API.
 

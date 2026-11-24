@@ -1,12 +1,17 @@
 //! Converts parsed WXML into a stable, source-mapped structural render tree.
 //!
-//! The tree supports headless inspection and tests. It does not calculate
-//! styles, geometry, pixels, layout, component state, or event behavior.
+//! The tree supports headless inspection and tests. A limited WXSS subset can
+//! add computed declarations, without calculating layout, geometry, pixels,
+//! component state, or event behavior.
 
 use std::collections::BTreeMap;
 
 use sdkwork_miniprogram_wxml_compiler::{AttributeValue, Document, Node, Span, ValuePart};
 use serde::Serialize;
+
+mod styles;
+
+pub use styles::{StyleDiagnostic, StyleDiagnosticKind, StyleSourceSpan, StyledRenderTree};
 
 /// A stable, serializable structural tree generated from one WXML document.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -111,43 +116,84 @@ pub enum RenderAttributePart {
 /// ```
 #[must_use]
 pub fn build(document: &Document) -> RenderTree {
+    build_with_styles(document, "", "").tree
+}
+
+/// Converts WXML to a structural tree and applies a supported WXSS subset.
+///
+/// Type, class, and ID selectors with descendant combinators are supported.
+/// Computed declarations are indexed by stable Render Tree node id. Unsupported
+/// or malformed syntax is omitted and reported with its source location.
+#[must_use]
+pub fn build_with_styles(
+    document: &Document,
+    stylesheet_file: impl Into<String>,
+    stylesheet_source: &str,
+) -> StyledRenderTree {
+    let stylesheet_file = stylesheet_file.into();
+    let (rules, diagnostics) = styles::parse_stylesheet(&stylesheet_file, stylesheet_source);
     let mut next_id = 0;
+    let mut ancestors = Vec::new();
+    let mut computed_styles = BTreeMap::new();
     let children = document
         .children
         .iter()
-        .map(|node| build_node(node, &mut next_id))
+        .map(|node| {
+            build_node(
+                node,
+                &mut next_id,
+                &mut ancestors,
+                &rules,
+                &mut computed_styles,
+            )
+        })
         .collect();
-    RenderTree {
-        children,
-        node_count: next_id,
+    StyledRenderTree {
+        tree: RenderTree {
+            children,
+            node_count: next_id,
+        },
+        computed_styles,
+        diagnostics,
     }
 }
 
-fn build_node(node: &Node, next_id: &mut usize) -> RenderNode {
+fn build_node(
+    node: &Node,
+    next_id: &mut usize,
+    ancestors: &mut Vec<styles::ElementFacts>,
+    rules: &[styles::StyleRule],
+    computed_styles: &mut BTreeMap<usize, BTreeMap<String, String>>,
+) -> RenderNode {
     let id = *next_id;
     *next_id = next_id.saturating_add(1);
 
     match node {
-        Node::Element(element) => RenderNode::Element {
-            id,
-            tag_name: element.tag_name.clone(),
-            attributes: element
-                .attributes
-                .iter()
-                .map(|attribute| {
-                    (
-                        attribute.name.clone(),
-                        convert_attribute(&attribute.value),
-                    )
-                })
-                .collect(),
-            children: element
+        Node::Element(element) => {
+            let facts = styles::ElementFacts::from_wxml(element);
+            let declarations = styles::matching_declarations(&facts, ancestors, rules);
+            if !declarations.is_empty() {
+                computed_styles.insert(id, declarations);
+            }
+            ancestors.push(facts);
+            let children = element
                 .children
                 .iter()
-                .map(|child| build_node(child, next_id))
-                .collect(),
-            source: element.span,
-        },
+                .map(|child| build_node(child, next_id, ancestors, rules, computed_styles))
+                .collect();
+            ancestors.pop();
+            RenderNode::Element {
+                id,
+                tag_name: element.tag_name.clone(),
+                attributes: element
+                    .attributes
+                    .iter()
+                    .map(|attribute| (attribute.name.clone(), convert_attribute(&attribute.value)))
+                    .collect(),
+                children,
+                source: element.span,
+            }
+        }
         Node::Text { value, span } => RenderNode::Text {
             id,
             value: value.clone(),
@@ -189,7 +235,7 @@ fn convert_attribute_part(part: &ValuePart) -> RenderAttributePart {
 
 #[cfg(test)]
 mod tests {
-    use super::{RenderAttribute, RenderAttributePart, RenderNode, build};
+    use super::{RenderAttribute, RenderAttributePart, RenderNode, build, build_with_styles};
 
     #[test]
     fn preserves_structure_bindings_attributes_and_source_locations()
@@ -200,7 +246,7 @@ mod tests {
         )?;
         let tree = build(&document);
 
-        assert_eq!(tree.node_count, 4);
+        assert_eq!(tree.node_count, 3);
         let RenderNode::Element {
             id: 0,
             attributes,
@@ -225,7 +271,7 @@ mod tests {
             children[1],
             RenderNode::Binding { id: 2, ref expression, .. } if expression == "name"
         ));
-        assert!(matches!(children[2], RenderNode::Text { id: 3, .. }));
+        assert_eq!(children.len(), 2);
         Ok(())
     }
 
@@ -236,6 +282,43 @@ mod tests {
 
         assert_eq!(json["children"][0]["kind"], "binding");
         assert_eq!(json["children"][0]["expression"], "title");
+        Ok(())
+    }
+
+    #[test]
+    fn applies_type_class_id_and_descendant_styles_in_cascade_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let document = sdkwork_miniprogram_wxml_compiler::parse(
+            "inline.wxml",
+            "<view class='panel'><text id='heading' class='title'>Hi</text></view>",
+        )?;
+        let styled = build_with_styles(
+            &document,
+            "inline.wxss",
+            "view { display: flex; color: red } .panel text { color: blue } #heading { font-size: 18rpx; color: green }",
+        );
+
+        assert_eq!(styled.diagnostics.len(), 0);
+        assert_eq!(styled.computed_styles[&0]["display"], "flex");
+        assert_eq!(styled.computed_styles[&1]["color"], "green");
+        assert_eq!(styled.computed_styles[&1]["font-size"], "18rpx");
+        Ok(())
+    }
+
+    #[test]
+    fn reports_unsupported_styles_with_source_locations() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let document = sdkwork_miniprogram_wxml_compiler::parse("inline.wxml", "<view />")?;
+        let styled = build_with_styles(
+            &document,
+            "pages/index/index.wxss",
+            "@import 'x';\n@media screen { view { color: red } }\nview:hover { color: blue }",
+        );
+
+        assert!(styled.computed_styles.is_empty());
+        assert_eq!(styled.diagnostics.len(), 2, "{:#?}", styled.diagnostics);
+        assert_eq!(styled.diagnostics[0].span.line, 1);
+        assert_eq!(styled.diagnostics[1].span.line, 2);
         Ok(())
     }
 }

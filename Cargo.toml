@@ -19,7 +19,7 @@ default-members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 version = "0.1.0"
 license = "MIT"
 repository = "https://github.com/sdkwork-ai/sdkwork-miniprogram-runtime"
@@ -34,10 +34,9 @@ sdkwork-miniprogram-v8-adapter = { path = "crates/sdkwork-miniprogram-v8-adapter
 sdkwork-miniprogram-wxml-compiler = { path = "crates/sdkwork-miniprogram-wxml-compiler" }
 thiserror = "2.0.17"
 tracing = "0.1.41"
-tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 v8 = "152.2.0"
-zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

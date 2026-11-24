@@ -42,6 +42,12 @@ pub struct ResourceBudget {
     pub max_storage_entries_per_application: usize,
     /// Maximum encoded size of one storage value in bytes.
     pub max_storage_value_bytes: usize,
+    /// Maximum UTF-8 source size accepted by one application JavaScript evaluation.
+    pub max_javascript_source_bytes: usize,
+    /// Maximum V8 heap size assigned to one application JavaScript context.
+    pub max_javascript_heap_bytes: usize,
+    /// Deadline applied to one application JavaScript evaluation in milliseconds.
+    pub javascript_timeout_ms: u64,
 }
 
 impl Default for ResourceBudget {
@@ -51,6 +57,9 @@ impl Default for ResourceBudget {
             max_pages_per_application: 128,
             max_storage_entries_per_application: 1024,
             max_storage_value_bytes: 1024 * 1024,
+            max_javascript_source_bytes: 4 * 1024 * 1024,
+            max_javascript_heap_bytes: 64 * 1024 * 1024,
+            javascript_timeout_ms: 5_000,
         }
     }
 }
@@ -120,6 +129,14 @@ impl RuntimeConfig {
                 "max_storage_value_bytes",
                 self.resource_budget.max_storage_value_bytes,
             ),
+            (
+                "max_javascript_source_bytes",
+                self.resource_budget.max_javascript_source_bytes,
+            ),
+            (
+                "max_javascript_heap_bytes",
+                self.resource_budget.max_javascript_heap_bytes,
+            ),
         ];
         for (field, value) in limits {
             if value == 0 {
@@ -128,6 +145,12 @@ impl RuntimeConfig {
                     reason: "must be greater than zero".to_owned(),
                 });
             }
+        }
+        if self.resource_budget.javascript_timeout_ms == 0 {
+            return Err(RuntimeError::InvalidConfiguration {
+                field: "javascript_timeout_ms",
+                reason: "must be greater than zero".to_owned(),
+            });
         }
         Ok(())
     }

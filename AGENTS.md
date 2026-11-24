@@ -2,6 +2,8 @@
 
 This repository is a Rust mini-program runtime foundation. Read only the task-relevant global specifications in the sibling `../sdkwork-specs/` checkout.
 
+Repository overview: [README](README.md) and [documentation index](docs/README.md). The [product PRD](docs/product/prd/PRD.md) is the supplied product baseline. The [technical architecture](docs/architecture/tech/TECH_ARCHITECTURE.md) and [REQ-2026-0001](docs/product/requirements/REQ-2026-0001-runtime-foundation.md) track current implementation boundaries and acceptance evidence.
+
 ## Task routing
 
 - Rust code, Cargo manifests and tests use `../sdkwork-specs/RUST_CODE_SPEC.md` and `../sdkwork-specs/DEPENDENCY_MANAGEMENT_SPEC.md`.

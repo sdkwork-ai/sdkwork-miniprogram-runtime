@@ -65,6 +65,29 @@ fn applications_have_independent_storage_namespaces() -> Result<(), RuntimeError
 }
 
 #[test]
+fn application_javascript_state_persists_and_is_isolated() -> Result<(), Box<dyn std::error::Error>>
+{
+    let runtime = runtime()?;
+    let first = runtime.load_application(manifest("js-first"))?;
+    let second = runtime.load_application(manifest("js-second"))?;
+    assert_eq!(first.evaluate_javascript("globalThis.value = 40")?, "40");
+    assert_eq!(first.evaluate_javascript("globalThis.value + 2")?, "42");
+    assert_eq!(
+        second.evaluate_javascript("typeof globalThis.value")?,
+        "undefined"
+    );
+    first.launch()?;
+    first.reload()?;
+    assert_eq!(first.evaluate_javascript("globalThis.value")?, "40");
+    runtime.unload_application("js-first")?;
+    assert!(matches!(
+        first.evaluate_javascript("1"),
+        Err(RuntimeError::InvalidState { .. })
+    ));
+    Ok(())
+}
+
+#[test]
 fn manifest_rejects_path_traversal_and_unknown_entry_page() -> Result<(), RuntimeError> {
     let runtime = runtime()?;
     let mut unsafe_manifest = manifest("unsafe");
@@ -147,6 +170,90 @@ fn unloading_releases_existing_storage_handles() -> Result<(), RuntimeError> {
     assert!(matches!(
         storage.get("key"),
         Err(RuntimeError::ApplicationStorageClosed { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn page_stack_navigation_checks_routes_and_configured_depth() -> Result<(), RuntimeError> {
+    let config = RuntimeConfig {
+        resource_budget: ResourceBudget {
+            max_pages_per_application: 2,
+            ..ResourceBudget::default()
+        },
+        ..RuntimeConfig::default()
+    };
+    let runtime = RuntimeBuilder::new().config(config).build()?;
+    let mut app_manifest = manifest("navigation");
+    app_manifest.pages.push("pages/profile/index".to_owned());
+    let app = runtime.load_application(app_manifest)?;
+    assert!(matches!(
+        app.navigate_to("pages/profile/index"),
+        Err(RuntimeError::InvalidState {
+            operation: "navigate_to",
+            ..
+        })
+    ));
+
+    app.launch()?;
+    assert_eq!(
+        app.navigate_to("pages/profile/index")?,
+        "pages/profile/index"
+    );
+    assert_eq!(
+        app.page_stack()?,
+        vec!["pages/home/index", "pages/profile/index"]
+    );
+    assert!(matches!(
+        app.navigate_to("pages/home/index"),
+        Err(RuntimeError::NavigationFailed { .. })
+    ));
+    assert_eq!(app.navigate_back(1)?, "pages/home/index");
+    assert!(matches!(
+        app.navigate_back(1),
+        Err(RuntimeError::NavigationFailed { .. })
+    ));
+    assert!(matches!(
+        app.navigate_to("pages/unregistered/index"),
+        Err(RuntimeError::NavigationFailed { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn redirect_replaces_current_page_without_growing_the_stack() -> Result<(), RuntimeError> {
+    let runtime = runtime()?;
+    let mut app_manifest = manifest("redirect");
+    app_manifest.entry_page = "pages/home/index".to_owned();
+    app_manifest.pages = vec![
+        "pages/home/index".to_owned(),
+        "pages/profile/index".to_owned(),
+        "pages/settings/index".to_owned(),
+    ];
+    let app = runtime.load_application(app_manifest)?;
+    app.launch()?;
+    app.navigate_to("pages/profile/index")?;
+    assert_eq!(
+        app.redirect_to("pages/settings/index")?,
+        "pages/settings/index"
+    );
+    assert_eq!(
+        app.page_stack()?,
+        vec!["pages/home/index", "pages/settings/index"]
+    );
+    Ok(())
+}
+
+#[test]
+fn unload_clears_the_page_stack_and_blocks_further_navigation() -> Result<(), RuntimeError> {
+    let runtime = runtime()?;
+    let app = runtime.load_application(manifest("unloaded-stack"))?;
+    app.launch()?;
+    runtime.unload_application("unloaded-stack")?;
+    assert_eq!(app.page_stack()?.len(), 0);
+    assert!(matches!(
+        app.navigate_back(1),
+        Err(RuntimeError::InvalidState { .. })
     ));
     Ok(())
 }

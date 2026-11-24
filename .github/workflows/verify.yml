@@ -1,0 +1,21 @@
+name: Verify
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: sdkwork-ai/sdkwork-github-workflow/.github/workflows/sdkwork-ci.yml@v1
+    with:
+      config_path: agent.workflow.json
+      scripts: verify
+      install_command: ''
+      os_matrix: '["ubuntu-24.04"]'
+      framework_ref: v1

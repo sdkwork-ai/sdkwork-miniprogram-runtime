@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -6,10 +7,13 @@ use thiserror::Error;
 pub type LoaderResult<T> = Result<T, LoaderError>;
 
 /// Classification of a project validation finding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum DiagnosticKind {
     /// The project manifest is malformed or incomplete.
     InvalidManifest,
+    /// Source project or resource size exceeds a configured byte limit.
+    ResourceLimit,
     /// A page route is not a safe normalized relative path.
     InvalidPagePath,
     /// A required project file does not exist.
@@ -21,7 +25,8 @@ pub enum DiagnosticKind {
 }
 
 /// File-scoped validation finding with an optional source position.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Diagnostic {
     /// Finding category.
     pub kind: DiagnosticKind,

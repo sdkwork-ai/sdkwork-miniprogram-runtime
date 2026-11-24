@@ -8,7 +8,7 @@
     "type": "rust-crate",
     "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-headless-renderer",
     "domain": "mini-program-runtime",
-    "capability": "source-mapped-structural-render-tree",
+    "capability": "source-mapped-structural-render-tree-with-wxss-subset",
     "languages": ["rust"],
     "generated": false,
     "manifests": ["Cargo.toml", "specs/component.spec.json"]
@@ -20,10 +20,13 @@
   ],
   "contracts": {
     "layerRole": "renderer-adapter",
-    "publicExports": ["build", "RenderTree", "RenderNode", "RenderAttribute"],
-    "providedPorts": [{ "name": "headlessRenderTree", "export": "build" }],
+    "publicExports": ["build", "build_with_styles", "RenderTree", "RenderNode", "RenderAttribute", "StyledRenderTree", "StyleDiagnostic", "StyleDiagnosticKind", "StyleSourceSpan"],
+    "providedPorts": [
+      { "name": "headlessRenderTree", "export": "build" },
+      { "name": "styledHeadlessRenderTree", "export": "build_with_styles" }
+    ],
     "requiredPorts": [{ "name": "wxmlDocument", "export": "Document", "provider": "sdkwork-miniprogram-wxml-compiler" }],
-    "runtimeEntrypoints": ["build"],
+    "runtimeEntrypoints": ["build", "build_with_styles"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],
@@ -33,6 +36,7 @@
     "configKeys": []
   },
   "verification": {
-    "commands": ["cargo test -p sdkwork-miniprogram-headless-renderer", "cargo clippy -p sdkwork-miniprogram-headless-renderer --all-targets -- -D warnings"]
+    "commands": ["cargo test -p sdkwork-miniprogram-headless-renderer", "cargo clippy -p sdkwork-miniprogram-headless-renderer --all-targets -- -D warnings"],
+    "evidence": ["Type, class, ID and descendant selectors are tested", "Unsupported constructs include stylesheet source locations", "Style output contains matched declarations only and does not claim layout or pixel rendering"]
   }
 }

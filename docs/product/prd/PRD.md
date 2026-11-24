@@ -1,5 +1,18 @@
 # sdkwork-miniprogram-runtime
 
+Status: active
+Owner: SDKWORK Runtime maintainers
+Updated: 2026-11-24
+Specs: `../sdkwork-specs/REQUIREMENTS_SPEC.md`, `../sdkwork-specs/TEST_SPEC.md`
+
+## Engineering status
+
+The product baseline below is sourced from the supplied PRD. Current implementation and evidence are tracked separately in [REQ-2026-0001](../requirements/REQ-2026-0001-runtime-foundation.md).
+
+## Product Goals and Scope
+
+The product goals, boundaries, features, delivery plan, and acceptance criteria are retained in the supplied PRD sections 2 through 12. This document remains the product source; implementation status and verification evidence live in the linked engineering requirement.
+
 ## 完整产品需求文档（PRD）
 
   文档属性       内容

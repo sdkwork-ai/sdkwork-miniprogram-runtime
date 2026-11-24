@@ -109,7 +109,10 @@ fn extract_entries<R: Read + std::io::Seek>(
         let mut entry = archive
             .by_index(index)
             .map_err(|error| LoaderError::InvalidArchive(error.to_string()))?;
-        let raw_name = entry.name().to_owned();
+        let raw_name = entry
+            .name()
+            .map_err(|error| LoaderError::InvalidArchive(error.to_string()))?
+            .into_owned();
         let relative_path = validate_archive_path(&raw_name)?;
         let normalized = relative_path
             .to_string_lossy()
@@ -120,12 +123,12 @@ fn extract_entries<R: Read + std::io::Seek>(
                 "duplicate path after normalization: {raw_name}"
             )));
         }
-        if let Some(mode) = entry.unix_mode() {
-            if mode & 0o170_000 == 0o120_000 {
-                return Err(LoaderError::UnsafeArchivePath(format!(
-                    "symbolic links are not allowed: {raw_name}"
-                )));
-            }
+        if let Some(mode) = entry.unix_mode()
+            && mode & 0o170_000 == 0o120_000
+        {
+            return Err(LoaderError::UnsafeArchivePath(format!(
+                "symbolic links are not allowed: {raw_name}"
+            )));
         }
         if entry.is_dir() {
             if entry.size() != 0 {
