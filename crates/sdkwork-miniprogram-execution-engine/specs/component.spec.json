@@ -8,7 +8,7 @@
     "type": "rust-crate",
     "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-execution-engine",
     "domain": "mini-program-runtime",
-    "capability": "runtime-configuration-application-lifecycle-javascript-and-isolation",
+    "capability": "runtime-configuration-application-lifecycle-javascript-debug-events-and-isolation",
     "languages": ["rust"],
     "generated": false,
     "manifests": ["Cargo.toml", "specs/component.spec.json"]
@@ -21,22 +21,23 @@
   ],
   "contracts": {
     "layerRole": "runtime-composition",
-    "publicExports": ["RuntimeBuilder", "Runtime", "ApplicationHandle", "ApplicationStorage", "ApplicationVirtualFileSystem", "VirtualFileMetadata", "VirtualDirectoryEntry", "NavigationFailure"],
+    "publicExports": ["RuntimeBuilder", "Runtime", "ApplicationHandle", "ApplicationStorage", "ApplicationVirtualFileSystem", "VirtualFileMetadata", "VirtualDirectoryEntry", "NavigationFailure", "DebugEvent", "DebugEventKind", "DebugJournal", "DEFAULT_DEBUG_EVENT_LIMIT"],
     "providedPorts": [
       { "name": "runtimeBuilder", "export": "RuntimeBuilder" },
       { "name": "applicationLifecycle", "export": "ApplicationHandle" },
       { "name": "applicationStorage", "export": "ApplicationStorage" },
       { "name": "applicationVirtualFileSystem", "export": "ApplicationVirtualFileSystem" },
-      { "name": "applicationJavaScript", "export": "ApplicationHandle" }
+      { "name": "applicationJavaScript", "export": "ApplicationHandle" },
+      { "name": "applicationInspectorEvents", "export": "ApplicationHandle::debug_events" }
     ],
     "requiredPorts": [],
-    "runtimeEntrypoints": ["RuntimeBuilder::build", "Runtime::load_application", "ApplicationHandle::launch", "ApplicationHandle::show", "ApplicationHandle::hide", "ApplicationHandle::file_system", "ApplicationVirtualFileSystem::read_file", "ApplicationVirtualFileSystem::write_file", "ApplicationVirtualFileSystem::metadata", "ApplicationVirtualFileSystem::remove_file", "ApplicationVirtualFileSystem::list_directory", "ApplicationHandle::evaluate_javascript", "ApplicationHandle::register_javascript_source", "ApplicationHandle::javascript_registration_snapshot", "ApplicationHandle::invoke_app_lifecycle", "ApplicationHandle::invoke_page_lifecycle", "ApplicationHandle::navigate_to", "ApplicationHandle::redirect_to", "ApplicationHandle::navigate_back", "Runtime::unload_application", "Runtime::destroy_application"],
+    "runtimeEntrypoints": ["RuntimeBuilder::build", "Runtime::load_application", "Runtime::application_ids", "ApplicationHandle::dispatch_inspector_message", "ApplicationHandle::launch", "ApplicationHandle::show", "ApplicationHandle::hide", "ApplicationHandle::file_system", "ApplicationVirtualFileSystem::read_file", "ApplicationVirtualFileSystem::write_file", "ApplicationVirtualFileSystem::metadata", "ApplicationVirtualFileSystem::remove_file", "ApplicationVirtualFileSystem::list_directory", "ApplicationHandle::evaluate_javascript", "ApplicationHandle::register_javascript_source", "ApplicationHandle::javascript_registration_snapshot", "ApplicationHandle::javascript_debug_snapshot", "ApplicationHandle::debug_events", "ApplicationHandle::clear_debug_events", "ApplicationHandle::record_network_event", "ApplicationHandle::invoke_app_lifecycle", "ApplicationHandle::invoke_page_lifecycle", "ApplicationHandle::navigate_to", "ApplicationHandle::redirect_to", "ApplicationHandle::navigate_back", "Runtime::unload_application", "Runtime::destroy_application"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],
     "dependencyApiExports": [],
     "dependencyApiSurfaces": [],
-    "events": [],
+    "events": ["DebugEventKind::Console", "DebugEventKind::Network", "DebugEventKind::Lifecycle", "DebugEventKind::Inspector"],
     "configKeys": ["max_files_per_application", "max_file_bytes", "max_total_file_bytes"]
   },
   "verification": {

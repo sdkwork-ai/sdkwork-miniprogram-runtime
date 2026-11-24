@@ -8,7 +8,7 @@ pub fn generate_html(project_name: &str) -> String {
     escape_html(&mut html, project_name);
     html.push_str(r" · Mini Program Workbench</title><style>");
     html.push_str(STYLESHEET);
-    html.push_str(".inspector-toggle.active{background:var(--blue-soft);border-color:#d8e3ff;color:#2857cd}.inspector-panel.hidden{display:none}");
+    html.push_str(".inspector-toggle.active{background:var(--blue-soft);border-color:#d8e3ff;color:#2857cd}.inspector-panel.hidden{display:none}.inspector-console-row{display:grid;grid-template-columns:74px 52px minmax(0,1fr);gap:8px;padding:4px 0;border-bottom:1px solid #edf0f4}.inspector-console-row time{color:#8994a3}.inspector-console-row strong{font-size:9px}.inspector-console-row.level-error strong{color:#bc3d3d}.inspector-console-row.level-warn strong{color:#a4771b}.inspector-console-row.level-info strong{color:#2e6cb5}.inspector-console-row span{white-space:pre-wrap;overflow-wrap:anywhere}.debug-toolbar{display:flex;gap:6px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #edf0f4}.debug-toolbar select,.debug-toolbar button{height:25px;border:1px solid #dce2ea;border-radius:4px;background:#fff;color:#45546a;font:10px inherit}.debug-toolbar button{padding:0 8px;cursor:pointer}.network-row{display:block;width:100%;padding:7px;border:0;border-bottom:1px solid #edf0f4;background:#fff;text-align:left;font:inherit;cursor:pointer}.network-row:hover{background:#f5f7fa}.network-details{white-space:pre-wrap;overflow-wrap:anywhere}");
     html.push_str(r#"</style></head><body>
 <div class="app-shell">
   <header class="topbar">
@@ -52,7 +52,7 @@ pub fn generate_html(project_name: &str) -> String {
     </section>
   </main>
   <section class="inspector-panel" id="inspector-panel">
-    <div class="inspector-toolbar"><strong>Inspector</strong><span class="inspector-status" id="inspector-status">Select a rendered element</span><div class="inspector-tabs"><button class="inspector-tab active" data-inspector-tab="tree">Elements</button><button class="inspector-tab" data-inspector-tab="styles">Styles</button><button class="inspector-tab" data-inspector-tab="data">Data</button><button class="inspector-tab" data-inspector-tab="diagnostics">Diagnostics</button><button class="inspector-tab" data-inspector-tab="runtime">Runtime</button></div><button class="icon-button small inspector-close" id="close-inspector" title="Hide Inspector" aria-label="Hide Inspector">×</button></div>
+    <div class="inspector-toolbar"><strong>Inspector</strong><span class="inspector-status" id="inspector-status">Select a rendered element</span><div class="inspector-tabs"><button class="inspector-tab active" data-inspector-tab="tree">Elements</button><button class="inspector-tab" data-inspector-tab="styles">Styles</button><button class="inspector-tab" data-inspector-tab="data">Data</button><button class="inspector-tab" data-inspector-tab="console">Console</button><button class="inspector-tab" data-inspector-tab="network">Network</button><button class="inspector-tab" data-inspector-tab="diagnostics">Diagnostics</button><button class="inspector-tab" data-inspector-tab="target">Target</button></div><button class="icon-button small inspector-close" id="close-inspector" title="Hide Inspector" aria-label="Hide Inspector">×</button></div>
     <div class="inspector-content" id="inspector-content"></div>
   </section>
   <dialog class="project-dialog" id="project-dialog"><form method="dialog"><header><strong>Switch project</strong><button class="icon-button small" value="cancel" aria-label="Close">×</button></header><label for="project-parent">Search folder</label><div class="project-path-row"><input id="project-parent" type="text" autocomplete="off" spellcheck="false" placeholder="Paste the folder containing projects"><button class="secondary-button" id="browse-projects">Browse</button></div><div class="project-list" id="project-list"></div><label for="project-path">Project folder</label><div class="project-path-row"><input id="project-path" type="text" autocomplete="off" spellcheck="false" placeholder="Select a project or paste its folder path"><button class="primary-button" id="load-project">Open</button></div><p class="project-error" id="project-error"></p></form></dialog>
@@ -94,8 +94,10 @@ const state = {
   pendingFile: '',
   inspection: null,
   selectedNode: null,
-  inspectorTab: 'tree',
+    inspectorTab: 'tree',
   inspectorVisible: true,
+  consoleFilter: 'all',
+  networkFilter: '',
 };
 const devices = {
   phone: { width: 390, height: 844, label: 'Phone' },
@@ -277,6 +279,116 @@ function renderInspector() {
     target.textContent = JSON.stringify(data.pageData || {}, null, 2);
     return;
   }
+  if (state.inspectorTab === 'console') {
+    const entries = Array.isArray(data.console) ? data.console : [];
+    target.replaceChildren();
+    const toolbar = document.createElement('div');
+    toolbar.className = 'debug-toolbar';
+    const filter = document.createElement('select');
+    filter.setAttribute('aria-label', 'Filter console level');
+    for (const level of ['all', 'log', 'info', 'warn', 'error', 'debug']) {
+      const option = document.createElement('option');
+      option.value = level;
+      option.textContent = level === 'all' ? 'All levels' : level;
+      filter.append(option);
+    }
+    filter.value = state.consoleFilter;
+    filter.addEventListener('change', () => { state.consoleFilter = filter.value; renderInspector(); });
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.textContent = 'Clear view';
+    clear.addEventListener('click', () => { state.inspection.console = []; renderInspector(); });
+    const exportButton = document.createElement('button');
+    exportButton.type = 'button';
+    exportButton.textContent = 'Export';
+    exportButton.addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'runtime-console.json';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+    toolbar.append(filter, clear, exportButton);
+    target.append(toolbar);
+    const visibleEntries = entries.filter(entry => state.consoleFilter === 'all' || entry.level === state.consoleFilter);
+    if (!visibleEntries.length) {
+      const empty = document.createElement('div');
+      empty.textContent = entries.length ? 'No records match this filter.' : 'No console records were emitted by this Runtime target.';
+      target.append(empty);
+      return;
+    }
+    for (const entry of visibleEntries) {
+      const row = document.createElement('div');
+      row.className = `inspector-console-row level-${entry.level || 'log'}`;
+      const time = document.createElement('time');
+      time.textContent = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
+      const level = document.createElement('strong');
+      level.textContent = String(entry.level || 'log').toUpperCase();
+      const message = document.createElement('span');
+      message.textContent = (entry.args || []).map(value => typeof value === 'string' ? value : JSON.stringify(value)).join(' ');
+      row.append(time, level, message);
+      target.append(row);
+    }
+    return;
+  }
+  if (state.inspectorTab === 'network') {
+    const entries = Array.isArray(data.network) ? data.network : [];
+    target.replaceChildren();
+    const toolbar = document.createElement('div');
+    toolbar.className = 'debug-toolbar';
+    const filter = document.createElement('input');
+    filter.type = 'search';
+    filter.setAttribute('aria-label', 'Filter network requests');
+    filter.placeholder = 'Filter requests';
+    filter.value = state.networkFilter;
+    filter.addEventListener('change', () => { state.networkFilter = filter.value; renderInspector(); });
+    const exportButton = document.createElement('button');
+    exportButton.type = 'button';
+    exportButton.textContent = 'Export';
+    exportButton.addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'runtime-network.json';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+    toolbar.append(filter, exportButton);
+    target.append(toolbar);
+    if (!entries.length) {
+      const empty = document.createElement('div');
+      empty.textContent = 'No network records. Network events will appear when the Runtime wx.request provider is enabled.';
+      target.append(empty);
+      return;
+    }
+    const filteredEntries = entries.filter(entry => `${entry.method || ''} ${entry.url || ''} ${entry.status || ''}`.toLowerCase().includes(state.networkFilter.toLowerCase()));
+    for (const entry of filteredEntries) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'network-row';
+      row.textContent = `${entry.method || 'REQUEST'}  ${entry.url || 'unknown URL'}  ${entry.status || ''}  ${entry.durationMs ?? ''} ms`;
+      row.addEventListener('click', () => {
+        const detail = document.createElement('pre');
+        detail.className = 'network-details';
+        detail.textContent = JSON.stringify({
+          url: entry.url,
+          method: entry.method,
+          requestHeaders: entry.requestHeaders,
+          requestBody: entry.requestBody,
+          responseHeaders: entry.responseHeaders,
+          status: entry.status,
+          durationMs: entry.durationMs,
+          failure: entry.failure,
+          initiator: entry.initiator,
+        }, null, 2);
+        target.replaceChildren(row, detail);
+      });
+      target.append(row);
+    }
+    if (!filteredEntries.length) target.append('No requests match this filter.');
+    return;
+  }
   if (state.inspectorTab === 'diagnostics') {
     const diagnostics = data.diagnostics || [];
     target.textContent = diagnostics.length
@@ -284,7 +396,17 @@ function renderInspector() {
       : 'No renderer-subset diagnostics.';
     return;
   }
-  target.textContent = 'JavaScript runtime debugging is not connected to this workbench yet. The V8 adapter provides the Inspector session bridge, while the CDP WebSocket target, pause loop and source mapping are still pending.';
+  if (state.inspectorTab === 'target') {
+    target.textContent = JSON.stringify({
+      targetId: data.target?.targetId || 'unknown',
+      type: data.target?.type || 'mini-program',
+      state: data.target?.state || 'unknown',
+      protocolVersion: data.protocolVersion,
+      capabilities: data.debugCapabilities,
+    }, null, 2);
+    return;
+  }
+  target.textContent = 'JavaScript runtime debugging is not connected to this workbench yet. The Runtime owns the Inspector session, while transport, pause loop and source mapping are still pending.';
 }
 function selectNode(id) {
   state.selectedNode = id;

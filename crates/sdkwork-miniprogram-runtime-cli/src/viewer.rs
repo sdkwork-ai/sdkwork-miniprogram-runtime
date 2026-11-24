@@ -21,6 +21,14 @@ pub struct ViewerPage {
     pub style_diagnostics: Value,
     /// Snapshot of evaluated page data.
     pub page_data: Value,
+    /// Runtime-owned console records collected while loading the page.
+    pub console_events: Value,
+    /// Runtime-owned network records collected while loading the page.
+    pub network_events: Value,
+    /// Target identity and lifecycle state reported by the Runtime.
+    pub target: Value,
+    /// Runtime-owned debugger protocol capability report.
+    pub debug_capabilities: Value,
 }
 
 /// Launch failures for the native preview window.
@@ -71,6 +79,11 @@ pub fn generate_page_html(title: &str, page: &ViewerPage) -> String {
     let inspector = serde_json::json!({
         "route": page.route,
         "pageData": page.page_data,
+        "console": page.console_events,
+        "network": page.network_events,
+        "target": page.target,
+        "protocolVersion": "sdkwork-miniprogram-inspector/0.1",
+        "debugCapabilities": page.debug_capabilities,
         "renderTree": page.render_tree,
         "computedStyles": page.computed_styles,
         "diagnostics": page.style_diagnostics
@@ -402,6 +415,10 @@ mod tests {
                 computed_styles: json!({"0": {"color": "red"}}),
                 style_diagnostics: json!([]),
                 page_data: json!({}),
+                console_events: json!([]),
+                network_events: json!([]),
+                target: json!({"targetId":"test","type":"mini-program"}),
+                debug_capabilities: json!({}),
             },
         );
         assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));

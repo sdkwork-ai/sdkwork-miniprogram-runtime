@@ -18,6 +18,7 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const MINI_PROGRAM_BOOTSTRAP: &str = r"
 globalThis.__sdkworkMiniProgram = {
   app: null, pages: [], components: [], appSource: null, pageSources: [], componentSources: [],
+  debug: { console: [], network: [] },
 };
 const __sdkworkPrepareDefinition = definition => {
   definition.data = { ...(definition.data ?? {}) };
@@ -27,8 +28,20 @@ const __sdkworkPrepareDefinition = definition => {
   };
   return definition;
 };
+const __sdkworkDebugValue = value => {
+  try { return JSON.parse(JSON.stringify(value)); } catch (_) { return String(value); }
+};
+const __sdkworkRecordConsole = (level, args) => {
+  const records = globalThis.__sdkworkMiniProgram.debug.console;
+  records.push({ level, args: args.map(__sdkworkDebugValue), timestamp: Date.now() });
+  if (records.length > 500) records.splice(0, records.length - 500);
+};
 globalThis.console = Object.freeze({
-  log() {}, info() {}, warn() {}, error() {}, debug() {},
+  log(...args) { __sdkworkRecordConsole('log', args); },
+  info(...args) { __sdkworkRecordConsole('info', args); },
+  warn(...args) { __sdkworkRecordConsole('warn', args); },
+  error(...args) { __sdkworkRecordConsole('error', args); },
+  debug(...args) { __sdkworkRecordConsole('debug', args); },
 });
 globalThis.App = function(definition) {
   if (globalThis.__sdkworkMiniProgram.app !== null) {
@@ -290,6 +303,38 @@ impl JavaScriptContext {
             });
         }
         self.evaluate_unchecked(source)
+    }
+
+    /// Return bounded Runtime debug events collected by the mini-program shims.
+    ///
+    /// Console entries are recorded by the runtime's console bridge. Network entries remain
+    /// empty until a host-backed mini-program request provider is installed.
+    ///
+    /// # Errors
+    /// Returns [`V8Error::ResultConversion`] when the Runtime debug payload cannot be decoded.
+    pub fn debug_snapshot(&mut self) -> Result<serde_json::Value> {
+        let value = self.evaluate("JSON.stringify(globalThis.__sdkworkMiniProgram.debug)")?;
+        serde_json::from_str(&value).map_err(|_| V8Error::ResultConversion)
+    }
+
+    /// Drain runtime debug buffers and return their structured contents.
+    ///
+    /// Console records are produced by the runtime console shim. Network records are reserved
+    /// for a real host-backed request provider and are never synthesized by this adapter.
+    ///
+    /// # Errors
+    /// Returns [`V8Error::ResultConversion`] when the Runtime debug payload cannot be decoded.
+    pub fn take_debug_snapshot(&mut self) -> Result<serde_json::Value> {
+        let value = self.evaluate(
+            r"JSON.stringify((() => {
+              const debug = globalThis.__sdkworkMiniProgram.debug;
+              const snapshot = { console: debug.console, network: debug.network };
+              debug.console = [];
+              debug.network = [];
+              return snapshot;
+            })())",
+        )?;
+        serde_json::from_str(&value).map_err(|_| V8Error::ResultConversion)
     }
 
     /// Dispatch one Chrome `DevTools` Protocol message to this context's V8 inspector session.
@@ -809,6 +854,20 @@ mod tests {
                 message.contains(r#""id":2"#) && message.contains(r#""value":42"#)
             })
         );
+        Ok(())
+    }
+
+    #[test]
+    fn records_runtime_console_events_in_a_bounded_debug_snapshot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut context = super::JavaScriptContext::new()?;
+        context.evaluate("console.info('hello', {ready: true}); console.error('failed')")?;
+        let snapshot = context.debug_snapshot()?;
+        assert_eq!(snapshot["console"][0]["level"], "info");
+        assert_eq!(snapshot["console"][0]["args"][0], "hello");
+        assert_eq!(snapshot["console"][0]["args"][1]["ready"], true);
+        assert_eq!(snapshot["console"][1]["level"], "error");
+        assert!(snapshot["network"].as_array().is_some_and(Vec::is_empty));
         Ok(())
     }
 

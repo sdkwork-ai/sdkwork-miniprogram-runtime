@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::info;
 
-use crate::{ApplicationStorage, ApplicationVirtualFileSystem, Result, RuntimeError};
+use crate::{
+    ApplicationStorage, ApplicationVirtualFileSystem, DebugEvent, DebugEventKind, DebugJournal,
+    Result, RuntimeError,
+};
 
 /// Application package metadata required to create an isolated runtime context.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +114,7 @@ pub(crate) struct ApplicationInner {
     state: Mutex<ApplicationRuntimeState>,
     pub storage: ApplicationStorage,
     pub file_system: ApplicationVirtualFileSystem,
+    debug: Mutex<DebugJournal>,
     max_page_stack_depth: usize,
     max_javascript_source_bytes: usize,
     max_javascript_heap_bytes: usize,
@@ -150,6 +154,7 @@ impl ApplicationHandle {
                 manifest,
                 storage,
                 file_system,
+                debug: Mutex::new(DebugJournal::default()),
                 max_page_stack_depth,
                 max_javascript_source_bytes,
                 max_javascript_heap_bytes,
@@ -196,6 +201,56 @@ impl ApplicationHandle {
         self.inner.file_system.clone()
     }
 
+    /// Return runtime debug events after an optional sequence cursor.
+    ///
+    /// Console events are captured from the JavaScript runtime shim. Network events only appear
+    /// when a host-backed mini-program request provider records them through
+    /// [`ApplicationHandle::record_network_event`].
+    ///
+    /// # Errors
+    /// Returns [`RuntimeError::LockPoisoned`] if the debug journal is unavailable.
+    pub fn debug_events(&self, after: Option<u64>) -> Result<Vec<DebugEvent>> {
+        self.inner
+            .debug
+            .lock()
+            .map(|journal| journal.snapshot_since(after))
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application debug journal",
+            })
+    }
+
+    /// Clear retained runtime debug events while preserving sequence numbering.
+    ///
+    /// # Errors
+    /// Returns [`RuntimeError::LockPoisoned`] if the debug journal is unavailable.
+    pub fn clear_debug_events(&self) -> Result<()> {
+        self.inner
+            .debug
+            .lock()
+            .map(|mut journal| journal.clear())
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application debug journal",
+            })
+    }
+
+    /// Record a host-backed network event for Inspector consumers.
+    ///
+    /// The caller owns request execution and must redact credentials, cookies, tokens and other
+    /// sensitive fields before publishing the payload. This method does not create network
+    /// traffic and is intentionally separate from the JavaScript runtime.
+    ///
+    /// # Errors
+    /// Returns [`RuntimeError::LockPoisoned`] if the debug journal is unavailable.
+    pub fn record_network_event(&self, payload: serde_json::Value) -> Result<u64> {
+        self.inner
+            .debug
+            .lock()
+            .map(|mut journal| journal.record(DebugEventKind::Network, payload))
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application debug journal",
+            })
+    }
+
     /// Evaluate JavaScript in this application's persistent, isolated V8 context.
     ///
     /// The context is created on first use and remains available through reloads. It is
@@ -239,12 +294,14 @@ impl ApplicationHandle {
             })?;
             state.javascript.insert(context)
         };
-        context
-            .evaluate(source)
-            .map_err(|reason| RuntimeError::JavaScriptExecution {
-                app_id: self.app_id().to_owned(),
-                reason,
-            })
+        let evaluated = context.evaluate(source);
+        let drained = self.drain_debug_events(context);
+        let result = evaluated.map_err(|reason| RuntimeError::JavaScriptExecution {
+            app_id: self.app_id().to_owned(),
+            reason,
+        })?;
+        drained?;
+        Ok(result)
     }
 
     /// Register an application or page source file in this application's persistent JS context.
@@ -286,12 +343,13 @@ impl ApplicationHandle {
             })?;
             state.javascript.insert(context)
         };
-        context
-            .register_source(source_name, source)
-            .map_err(|reason| RuntimeError::JavaScriptExecution {
-                app_id: self.app_id().to_owned(),
-                reason,
-            })
+        let registered = context.register_source(source_name, source);
+        let drained = self.drain_debug_events(context);
+        registered.map_err(|reason| RuntimeError::JavaScriptExecution {
+            app_id: self.app_id().to_owned(),
+            reason,
+        })?;
+        drained
     }
 
     /// Return a JSON snapshot of registration definitions created by app and page scripts.
@@ -322,6 +380,77 @@ impl ApplicationHandle {
             })
     }
 
+    /// Return the Runtime-owned Console and Network debug event snapshot.
+    ///
+    /// The snapshot is bounded by the application Runtime journal. Network remains empty until
+    /// a host-backed mini-program request provider is registered.
+    ///
+    /// # Errors
+    /// Returns [`RuntimeError::LockPoisoned`] if the application debug journal is unavailable.
+    pub fn javascript_debug_snapshot(&self) -> Result<serde_json::Value> {
+        let events = self.debug_events(None)?;
+        let console = events
+            .iter()
+            .filter(|event| event.kind == DebugEventKind::Console)
+            .map(|event| event.payload.clone())
+            .collect::<Vec<_>>();
+        let network = events
+            .iter()
+            .filter(|event| event.kind == DebugEventKind::Network)
+            .map(|event| event.payload.clone())
+            .collect::<Vec<_>>();
+        Ok(serde_json::json!({
+            "protocolVersion": "sdkwork-miniprogram-inspector/0.1",
+            "target": {
+                "targetId": self.app_id(),
+                "type": "mini-program",
+                "state": self.state().map(|state| format!("{state:?}"))?,
+            },
+            "console": console,
+            "network": network,
+            "events": events,
+            "capabilities": {
+                "console": "runtime-shim-recording-partial",
+                "network": "requires-request-provider",
+                "v8InspectorSession": "protocol-session-only",
+                "cdpTransport": "not-available",
+                "debuggerPauseLoop": "not-available",
+            }
+        }))
+    }
+
+    /// Dispatch one CDP message to this application's V8 Inspector session.
+    ///
+    /// Responses and notifications are returned as JSON protocol messages. This call only
+    /// processes messages synchronously and cannot service commands while V8 is paused.
+    ///
+    /// # Errors
+    /// Returns [`RuntimeError::LockPoisoned`] if application state is unavailable and
+    /// [`RuntimeError::JavaScriptExecution`] if V8 rejects the protocol message.
+    pub fn dispatch_inspector_message(&self, message: &str) -> Result<Vec<String>> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application state",
+            })?;
+        let context =
+            state
+                .javascript
+                .as_mut()
+                .ok_or_else(|| RuntimeError::JavaScriptExecution {
+                    app_id: self.app_id().to_owned(),
+                    reason: sdkwork_miniprogram_v8_adapter::V8Error::WorkerStopped,
+                })?;
+        context
+            .dispatch_inspector_message(message)
+            .map_err(|reason| RuntimeError::JavaScriptExecution {
+                app_id: self.app_id().to_owned(),
+                reason,
+            })
+    }
+
     /// Invoke an application lifecycle method such as `onLaunch` or `onShow` when registered.
     ///
     /// # Errors
@@ -342,12 +471,14 @@ impl ApplicationHandle {
                     app_id: self.app_id().to_owned(),
                     reason: sdkwork_miniprogram_v8_adapter::V8Error::WorkerStopped,
                 })?;
-        context
-            .invoke_app_callback(method)
-            .map_err(|reason| RuntimeError::JavaScriptExecution {
-                app_id: self.app_id().to_owned(),
-                reason,
-            })
+        let invoked = context.invoke_app_callback(method);
+        let drained = self.drain_debug_events(context);
+        let result = invoked.map_err(|reason| RuntimeError::JavaScriptExecution {
+            app_id: self.app_id().to_owned(),
+            reason,
+        })?;
+        drained?;
+        Ok(result)
     }
 
     /// Invoke a registered page lifecycle method such as `onLoad`.
@@ -370,12 +501,14 @@ impl ApplicationHandle {
                     app_id: self.app_id().to_owned(),
                     reason: sdkwork_miniprogram_v8_adapter::V8Error::WorkerStopped,
                 })?;
-        context
-            .invoke_page_callback(page_index, method)
-            .map_err(|reason| RuntimeError::JavaScriptExecution {
-                app_id: self.app_id().to_owned(),
-                reason,
-            })
+        let invoked = context.invoke_page_callback(page_index, method);
+        let drained = self.drain_debug_events(context);
+        let result = invoked.map_err(|reason| RuntimeError::JavaScriptExecution {
+            app_id: self.app_id().to_owned(),
+            reason,
+        })?;
+        drained?;
+        Ok(result)
     }
 
     /// Transition a loaded application to its launched state.
@@ -537,7 +670,7 @@ impl ApplicationHandle {
         }
         let next_length = page_stack.len() - delta;
         page_stack.truncate(next_length);
-        page_stack
+        let route = page_stack
             .last()
             .cloned()
             .ok_or_else(|| RuntimeError::NavigationFailed {
@@ -546,7 +679,22 @@ impl ApplicationHandle {
                     requested: delta,
                     available,
                 },
-            })
+            })?;
+        self.inner
+            .debug
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application debug journal",
+            })?
+            .record(
+                DebugEventKind::Lifecycle,
+                serde_json::json!({
+                    "operation": "navigate_back",
+                    "route": route,
+                    "delta": delta,
+                }),
+            );
+        Ok(route)
     }
 
     fn navigate(
@@ -594,6 +742,19 @@ impl ApplicationHandle {
                 route.clone_into(current);
             }
         }
+        self.inner
+            .debug
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application debug journal",
+            })?
+            .record(
+                DebugEventKind::Lifecycle,
+                serde_json::json!({
+                    "operation": operation.as_str(),
+                    "route": route,
+                }),
+            );
         Ok(route.to_owned())
     }
 
@@ -619,6 +780,40 @@ impl ApplicationHandle {
             });
         }
         Ok(state)
+    }
+
+    fn drain_debug_events(&self, context: &mut JavaScriptContext) -> Result<()> {
+        let snapshot =
+            context
+                .take_debug_snapshot()
+                .map_err(|reason| RuntimeError::JavaScriptExecution {
+                    app_id: self.app_id().to_owned(),
+                    reason,
+                })?;
+        let mut journal = self
+            .inner
+            .debug
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application debug journal",
+            })?;
+        if let Some(events) = snapshot
+            .get("console")
+            .and_then(serde_json::Value::as_array)
+        {
+            for event in events {
+                journal.record(DebugEventKind::Console, event.clone());
+            }
+        }
+        if let Some(events) = snapshot
+            .get("network")
+            .and_then(serde_json::Value::as_array)
+        {
+            for event in events {
+                journal.record(DebugEventKind::Network, event.clone());
+            }
+        }
+        Ok(())
     }
 
     fn transition(
@@ -663,6 +858,19 @@ impl ApplicationHandle {
             state.javascript = None;
         }
         state.lifecycle = next;
+        self.inner
+            .debug
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application debug journal",
+            })?
+            .record(
+                DebugEventKind::Lifecycle,
+                serde_json::json!({
+                    "operation": operation,
+                    "state": format!("{next:?}"),
+                }),
+            );
         info!(
             app_id = %self.app_id(),
             operation,

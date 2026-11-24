@@ -187,6 +187,23 @@ impl Runtime {
         Ok(applications.len())
     }
 
+    /// Return the identifiers of applications currently registered in this runtime.
+    ///
+    /// # Errors
+    /// Returns [`RuntimeError::LockPoisoned`] if the application registry lock is poisoned.
+    pub fn application_ids(&self) -> Result<Vec<String>> {
+        let applications =
+            self.inner
+                .applications
+                .lock()
+                .map_err(|_| RuntimeError::LockPoisoned {
+                    resource: "runtime application registry",
+                })?;
+        let mut ids = applications.keys().cloned().collect::<Vec<_>>();
+        ids.sort();
+        Ok(ids)
+    }
+
     fn transition_and_remove(
         &self,
         app_id: &str,

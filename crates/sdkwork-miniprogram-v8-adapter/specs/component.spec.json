@@ -21,10 +21,10 @@
   ],
   "contracts": {
     "layerRole": "runtime-composition",
-    "publicExports": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext", "JavaScriptContext::dispatch_inspector_message", "V8Error", "Result", "DEFAULT_MAX_SOURCE_BYTES", "DEFAULT_MAX_HEAP_BYTES", "DEFAULT_TIMEOUT"],
-    "providedPorts": [{ "name": "javascriptEvaluation", "export": "evaluate" }, { "name": "persistentJavascriptContext", "export": "JavaScriptContext" }, { "name": "v8InspectorProtocolSession", "export": "JavaScriptContext::dispatch_inspector_message" }],
+    "publicExports": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext", "JavaScriptContext::debug_snapshot", "JavaScriptContext::take_debug_snapshot", "JavaScriptContext::dispatch_inspector_message", "V8Error", "Result", "DEFAULT_MAX_SOURCE_BYTES", "DEFAULT_MAX_HEAP_BYTES", "DEFAULT_TIMEOUT"],
+    "providedPorts": [{ "name": "javascriptEvaluation", "export": "evaluate" }, { "name": "persistentJavascriptContext", "export": "JavaScriptContext" }, { "name": "v8InspectorProtocolSession", "export": "JavaScriptContext::dispatch_inspector_message" }, { "name": "javascriptConsoleDebugEvents", "export": "JavaScriptContext::take_debug_snapshot" }],
     "requiredPorts": [],
-    "runtimeEntrypoints": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext::new", "JavaScriptContext::evaluate", "JavaScriptContext::register_source", "JavaScriptContext::registration_snapshot", "JavaScriptContext::dispatch_inspector_message"],
+    "runtimeEntrypoints": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext::new", "JavaScriptContext::evaluate", "JavaScriptContext::register_source", "JavaScriptContext::registration_snapshot", "JavaScriptContext::debug_snapshot", "JavaScriptContext::take_debug_snapshot", "JavaScriptContext::dispatch_inspector_message"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],

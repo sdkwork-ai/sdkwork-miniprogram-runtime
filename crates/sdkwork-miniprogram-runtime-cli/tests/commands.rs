@@ -5,6 +5,7 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tungstenite::{Message, connect};
 
 fn cli() -> Command {
     Command::new(env!("CARGO_BIN_EXE_sdkwork-miniprogram-runtime-cli"))
@@ -173,10 +174,64 @@ fn verify_workbench(
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     verify_workbench_shell(address)?;
+    verify_runtime_cdp_target(address)?;
     verify_inspector_and_projects(address, fixture)?;
     verify_saved_preview(address, fixture)?;
     verify_security_and_switching(address, second_fixture)?;
     Ok(())
+}
+
+fn verify_runtime_cdp_target(address: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let (version_status, version) = http_request(address, "GET", "/json/version", "")?;
+    assert_eq!(version_status, 200);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&version)?["Protocol-Version"],
+        "1.3"
+    );
+    let (_, targets) = http_request(address, "GET", "/json/list", "")?;
+    let targets: serde_json::Value = serde_json::from_str(&targets)?;
+    let target = targets
+        .as_array()
+        .and_then(|entries| entries.first())
+        .ok_or("Runtime CDP target was not discovered")?;
+    assert_eq!(target["type"], "node");
+    assert!(target["id"].as_str().is_some());
+    let websocket_url = target["webSocketDebuggerUrl"]
+        .as_str()
+        .ok_or("Runtime target is missing its WebSocket URL")?;
+    let (mut socket, response) = connect(websocket_url)?;
+    assert_eq!(response.status().as_u16(), 101);
+    assert!(
+        connect(websocket_url).is_err(),
+        "target accepts a single active CDP session"
+    );
+    socket.send(Message::Text(
+        r#"{"id":1,"method":"Runtime.enable"}"#.into(),
+    ))?;
+    let response = read_cdp_response(&mut socket, 1)?;
+    assert!(response.get("result").is_some());
+    socket.send(Message::Text(
+        r#"{"id":2,"method":"Runtime.evaluate","params":{"expression":"6 * 7","returnByValue":true,"contextId":1}}"#.into(),
+    ))?;
+    let response = read_cdp_response(&mut socket, 2)?;
+    assert_eq!(response["result"]["result"]["value"], 42);
+    socket.close(None)?;
+    Ok(())
+}
+
+fn read_cdp_response<S: Read + Write>(
+    socket: &mut tungstenite::WebSocket<S>,
+    id: u64,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    loop {
+        let message = socket.read()?;
+        if message.is_text() {
+            let response: serde_json::Value = serde_json::from_str(message.to_text()?)?;
+            if response["id"].as_u64() == Some(id) {
+                return Ok(response);
+            }
+        }
+    }
 }
 
 fn verify_workbench_shell(address: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -195,7 +250,14 @@ fn verify_workbench_shell(address: &str) -> Result<(), Box<dyn std::error::Error
         "event.data.type === 'inspector-hide'",
         "event.source !== $('preview-frame').contentWindow",
         "data-inspector-tab=\"tree\"",
-        "data-inspector-tab=\"runtime\"",
+        "data-inspector-tab=\"console\"",
+        "data-inspector-tab=\"network\"",
+        "data-inspector-tab=\"target\"",
+        "data-inspector-tab=\"diagnostics\"",
+        "protocolVersion: data.protocolVersion",
+        "runtime-console.json",
+        "Filter console level",
+        "wx.request provider",
         "id=\"switch-project\"",
         "id=\"project-path\"",
         "id=\"preview-frame\"",
@@ -238,6 +300,25 @@ fn verify_inspector_and_projects(
             .is_some()
     );
     assert!(inspection["computedStyles"].is_object());
+    assert_eq!(
+        inspection["protocolVersion"],
+        "sdkwork-miniprogram-inspector/0.1"
+    );
+    assert_eq!(inspection["target"]["type"], "mini-program");
+    assert_eq!(
+        inspection["debugCapabilities"]["console"],
+        "runtime-shim-recording-partial"
+    );
+    assert_eq!(
+        inspection["debugCapabilities"]["network"],
+        "requires-request-provider"
+    );
+    assert_eq!(inspection["console"][0]["level"], "info");
+    assert_eq!(
+        inspection["console"][0]["args"][0],
+        "hello mini program runtime"
+    );
+    assert!(inspection["network"].as_array().is_some_and(Vec::is_empty));
     let (status, project) = http_request(address, "GET", "/api/project", "")?;
     assert_eq!(status, 200);
     let project: serde_json::Value = serde_json::from_str(&project)?;
@@ -279,7 +360,12 @@ fn verify_saved_preview(
             .as_bool()
             .unwrap_or(false)
     );
-    let (status, preview) = http_request(address, "GET", "/api/preview?device=phone", "")?;
+    let (status, preview) = http_request(
+        address,
+        "GET",
+        "/api/preview?page=pages%2Findex%2Findex&device=phone",
+        "",
+    )?;
     assert_eq!(status, 200);
     assert!(preview.contains(".canvas::-webkit-scrollbar{display:none}"));
     assert!(preview.contains("type:'inspector-hide'"));

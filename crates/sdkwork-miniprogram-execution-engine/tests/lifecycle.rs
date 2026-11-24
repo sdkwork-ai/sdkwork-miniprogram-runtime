@@ -38,6 +38,24 @@ fn runtime_configuration_rejects_zero_resource_ceilings() {
 }
 
 #[test]
+fn runtime_lists_targets_and_dispatches_inspector_protocol() -> Result<(), RuntimeError> {
+    let runtime = runtime()?;
+    let app = runtime.load_application(manifest("inspector-target"))?;
+    app.launch()?;
+    app.show()?;
+    app.register_javascript_source("pages/home/index.js", "Page({ data: { ready: true } });")?;
+
+    assert_eq!(runtime.application_ids()?, vec!["inspector-target"]);
+    let messages = app.dispatch_inspector_message(r#"{"id":1,"method":"Runtime.enable"}"#)?;
+    assert!(messages.iter().any(|message| message.contains(r#""id":1"#)));
+    let eval = app.dispatch_inspector_message(
+        r#"{"id":2,"method":"Runtime.evaluate","params":{"expression":"6 * 7","returnByValue":true,"contextId":1}}"#,
+    )?;
+    assert!(eval.iter().any(|message| message.contains(r#""value":42"#)));
+    Ok(())
+}
+
+#[test]
 fn application_lifecycle_has_deterministic_transitions() -> Result<(), RuntimeError> {
     let runtime = runtime()?;
     let app = runtime.load_application(manifest("shop"))?;
@@ -312,5 +330,51 @@ fn unload_clears_the_page_stack_and_blocks_further_navigation() -> Result<(), Ru
         app.navigate_back(1),
         Err(RuntimeError::InvalidState { .. })
     ));
+    Ok(())
+}
+
+#[test]
+fn inspector_debug_journal_collects_console_lifecycle_and_provider_network_events()
+-> Result<(), RuntimeError> {
+    let runtime = runtime()?;
+    let app = runtime.load_application(manifest("debug-events"))?;
+    app.launch()?;
+    app.show()?;
+    app.register_javascript_source(
+        "pages/home/index.js",
+        "console.info('page ready', { count: 2 });",
+    )?;
+    app.evaluate_javascript("console.warn('tap', 3)")?;
+    let request_id = app.record_network_event(serde_json::json!({
+        "requestId": "req-1",
+        "url": "https://api.example.test/items",
+        "method": "GET",
+        "phase": "requestWillBeSent"
+    }))?;
+    assert!(request_id > 0);
+
+    let events = app.debug_events(None)?;
+    assert!(events.iter().any(|event| {
+        event.kind == sdkwork_miniprogram_execution_engine::DebugEventKind::Console
+            && event.payload["level"] == "info"
+            && event.payload["args"][0] == "page ready"
+    }));
+    assert!(events.iter().any(|event| {
+        event.kind == sdkwork_miniprogram_execution_engine::DebugEventKind::Console
+            && event.payload["level"] == "warn"
+            && event.payload["args"][0] == "tap"
+    }));
+    assert!(events.iter().any(|event| {
+        event.kind == sdkwork_miniprogram_execution_engine::DebugEventKind::Network
+            && event.payload["requestId"] == "req-1"
+    }));
+    assert!(events.iter().any(|event| {
+        event.kind == sdkwork_miniprogram_execution_engine::DebugEventKind::Lifecycle
+            && event.payload["operation"] == "launch"
+    }));
+    let after_first = events[0].sequence;
+    assert_eq!(app.debug_events(Some(after_first))?.len(), events.len() - 1);
+    app.clear_debug_events()?;
+    assert_eq!(app.debug_events(None)?, []);
     Ok(())
 }

@@ -5,11 +5,14 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
+use std::thread;
 use std::time::Duration;
 
 use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+use tungstenite::Message;
 
 const MAX_EDIT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_TREE_ENTRIES: usize = 5_000;
@@ -20,16 +23,32 @@ struct ActiveProject {
     root: PathBuf,
     search_root: PathBuf,
     name: String,
+    app_id: String,
+    app: Arc<RwLock<sdkwork_miniprogram_execution_engine::ApplicationHandle>>,
+}
+
+struct DebugTargets {
+    target_id: String,
+    ws_path: String,
+    ws_url: String,
+    title: String,
+    app: Arc<RwLock<sdkwork_miniprogram_execution_engine::ApplicationHandle>>,
+    active_session: std::sync::Mutex<bool>,
 }
 
 /// Starts the loopback workbench, optionally opening it in a browser window.
 pub fn serve(root: &Path, project_name: &str, launch_window: bool) -> Result<(), Box<dyn Error>> {
     let root = fs::canonicalize(root)?;
-    let project = Arc::new(RwLock::new(ActiveProject {
-        name: project_name.to_owned(),
-        search_root: root.parent().unwrap_or(&root).to_path_buf(),
-        root: root.clone(),
-    }));
+    let app_id = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("mini-program")
+        .to_owned();
+    let project = Arc::new(RwLock::new(create_runtime_application(
+        &root,
+        &app_id,
+        project_name,
+    )?));
     let server = Server::http(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .map_err(io::Error::other)?;
     let address = server
@@ -37,6 +56,21 @@ pub fn serve(root: &Path, project_name: &str, launch_window: bool) -> Result<(),
         .to_ip()
         .ok_or_else(|| io::Error::other("workbench host did not bind an IP address"))?;
     let url = format!("http://{address}/");
+    let active = project
+        .read()
+        .map_err(|_| io::Error::other("project state is unavailable"))?
+        .clone();
+    let target_id = format!("mini-program:{}", active.app_id);
+    let ws_path = format!("/devtools/page/{}", active.app_id);
+    let ws_url = format!("ws://{address}{ws_path}");
+    let targets = Arc::new(DebugTargets {
+        target_id: target_id.clone(),
+        ws_path,
+        ws_url: ws_url.clone(),
+        title: project_name.to_owned(),
+        app: active.app.clone(),
+        active_session: std::sync::Mutex::new(false),
+    });
 
     if launch_window {
         super::viewer::launch_url(&url)?;
@@ -53,6 +87,11 @@ pub fn serve(root: &Path, project_name: &str, launch_window: bool) -> Result<(),
             "windowLaunched": launch_window,
             "defaultDevice": "phone",
             "editor": "Monaco Editor",
+            "cdpTarget": {
+                "targetId": target_id,
+                "webSocketDebuggerUrl": targets.ws_url,
+                "discoveryUrl": format!("http://{address}/json/list")
+            },
             "limitations": [
                 "supported WXML, page-data and WXSS subsets are rendered",
                 "wx APIs, events and full WeChat compatibility remain unsupported"
@@ -63,7 +102,7 @@ pub fn serve(root: &Path, project_name: &str, launch_window: bool) -> Result<(),
 
     loop {
         match server.recv_timeout(Duration::from_secs(1)) {
-            Ok(Some(request)) => handle_request(request, &project),
+            Ok(Some(request)) => handle_request(request, &project, &targets),
             Ok(None) => {}
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
             Err(error) => return Err(error.into()),
@@ -71,8 +110,16 @@ pub fn serve(root: &Path, project_name: &str, launch_window: bool) -> Result<(),
     }
 }
 
-fn handle_request(mut request: Request, project: &Arc<RwLock<ActiveProject>>) {
-    let result = route_request(&mut request, project);
+fn handle_request(
+    mut request: Request,
+    project: &Arc<RwLock<ActiveProject>>,
+    targets: &Arc<DebugTargets>,
+) {
+    if request.url().split('?').next() == Some(targets.ws_path.as_str()) {
+        upgrade_debug_websocket(request, targets);
+        return;
+    }
+    let result = route_request(&mut request, project, targets);
     let (status, content_type, body) = match result {
         Ok((content_type, body)) => (StatusCode(200), content_type, body),
         Err((status, message)) => (status, "text/plain; charset=utf-8", message),
@@ -88,11 +135,27 @@ fn handle_request(mut request: Request, project: &Arc<RwLock<ActiveProject>>) {
 fn route_request(
     request: &mut Request,
     active_project: &Arc<RwLock<ActiveProject>>,
+    targets: &Arc<DebugTargets>,
 ) -> Result<(&'static str, String), (StatusCode, String)> {
     let (path, query) = request.url().split_once('?').unwrap_or((request.url(), ""));
     if request.method() == &Method::Put && path == "/api/project" {
         require_same_origin(request)?;
-        return switch_project(request, active_project);
+        return switch_project(request, active_project, targets);
+    }
+    if request.method() == &Method::Get && matches!(path, "/json" | "/json/list") {
+        return target_list(request, targets);
+    }
+    if request.method() == &Method::Get && path == "/json/version" {
+        require_loopback_header(request)?;
+        return Ok((
+            "application/json; charset=utf-8",
+            json!({
+                "Browser": "SDKWORK Mini Program Runtime/0.1",
+                "Protocol-Version": "1.3",
+                "webSocketDebuggerUrl": targets.ws_url,
+            })
+            .to_string(),
+        ));
     }
     let current = active_project
         .read()
@@ -104,15 +167,200 @@ fn route_request(
         (&Method::Get, "/api/pages") => api_pages(request, &current),
         (&Method::Get, "/api/projects") => api_project_choices(request, &current, query),
         (&Method::Get, "/api/project") => api_project_info(request, &current),
-        (&Method::Get, "/api/inspect") => api_inspect(request, &current, query),
+        (&Method::Get, "/api/inspect") => api_inspect(request, &current, targets, query),
         (&Method::Get, "/api/file") => api_read_file(request, &current, query),
         (&Method::Put, "/api/file") => {
             require_same_origin(request)?;
-            save_file(request, &current.root)
+            save_file(request, active_project, targets)
         }
-        (&Method::Get, "/api/preview") => api_preview(request, &current, query),
+        (&Method::Get, "/api/preview") => api_preview(request, &current, targets, query),
         _ => Err((StatusCode(404), "not found".to_owned())),
     }
+}
+
+fn target_list(
+    request: &Request,
+    targets: &DebugTargets,
+) -> Result<(&'static str, String), (StatusCode, String)> {
+    require_loopback_header(request)?;
+    let target = json!({
+        "description": "SDKWORK Mini Program Runtime application target",
+        "devtoolsFrontendUrl": format!("/devtools/inspector.html?ws={}", targets.ws_url.trim_start_matches("ws://")),
+        "id": targets.target_id,
+        "title": targets.title,
+        "type": "node",
+        "url": format!("miniprogram://{}", targets.title),
+        "webSocketDebuggerUrl": targets.ws_url,
+    });
+    Ok((
+        "application/json; charset=utf-8",
+        json!([target]).to_string(),
+    ))
+}
+
+fn upgrade_debug_websocket(request: Request, targets: &Arc<DebugTargets>) {
+    let key = match validate_websocket_request(&request) {
+        Ok(key) => key,
+        Err((status, message)) => {
+            let _ = request.respond(Response::from_string(message).with_status_code(status));
+            return;
+        }
+    };
+    if let Err(status) = acquire_debug_session(targets) {
+        let message = if status == StatusCode(409) {
+            "debug target already has an active session"
+        } else {
+            "debug target unavailable"
+        };
+        let _ = request.respond(Response::from_string(message).with_status_code(status));
+        return;
+    }
+    let response = match websocket_upgrade_response(&key) {
+        Ok(response) => response,
+        Err(message) => {
+            release_debug_session(targets);
+            let _ =
+                request.respond(Response::from_string(message).with_status_code(StatusCode(400)));
+            return;
+        }
+    };
+    let stream = request.upgrade("websocket", response);
+    let failure_targets = Arc::clone(targets);
+    let targets = Arc::clone(targets);
+    let spawn = thread::Builder::new()
+        .name("sdkwork-miniprogram-cdp-session".to_owned())
+        .spawn(move || {
+            run_debug_websocket(stream, &targets);
+        });
+    if spawn.is_err() {
+        release_debug_session(&failure_targets);
+    }
+}
+
+fn validate_websocket_request(request: &Request) -> Result<String, (StatusCode, String)> {
+    if !is_loopback_request(request) {
+        return Err((
+            StatusCode(403),
+            "loopback WebSocket clients only".to_owned(),
+        ));
+    }
+    let is_upgrade = request.method() == &Method::Get
+        && request.headers().iter().any(|header| {
+            header.field.equiv("Upgrade") && header.value.as_str().eq_ignore_ascii_case("websocket")
+        })
+        && request.headers().iter().any(|header| {
+            header.field.equiv("Connection")
+                && header
+                    .value
+                    .as_str()
+                    .to_ascii_lowercase()
+                    .contains("upgrade")
+        });
+    if !is_upgrade {
+        return Err((StatusCode(400), "WebSocket upgrade required".to_owned()));
+    }
+    let origin = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Origin"))
+        .map(|header| header.value.as_str());
+    let host = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Host"))
+        .map(|header| header.value.as_str());
+    if origin
+        .zip(host)
+        .is_some_and(|(origin, host)| origin != format!("http://{host}"))
+    {
+        return Err((StatusCode(403), "WebSocket Origin rejected".to_owned()));
+    }
+    if !request
+        .headers()
+        .iter()
+        .any(|header| header.field.equiv("Sec-WebSocket-Version") && header.value.as_str() == "13")
+    {
+        return Err((StatusCode(400), "WebSocket version 13 required".to_owned()));
+    }
+    request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Sec-WebSocket-Key"))
+        .map(|header| header.value.as_str().to_owned())
+        .ok_or((StatusCode(400), "missing Sec-WebSocket-Key".to_owned()))
+}
+
+fn websocket_upgrade_response(key: &str) -> Result<Response<io::Empty>, String> {
+    let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
+    let headers = [
+        Header::from_str("Upgrade: websocket"),
+        Header::from_str("Connection: Upgrade"),
+        Header::from_str(&format!("Sec-WebSocket-Accept: {accept}")),
+    ];
+    let mut response = Response::new_empty(StatusCode(101));
+    for header in headers {
+        response = response.with_header(header.map_err(|()| "invalid WebSocket response header")?);
+    }
+    Ok(response)
+}
+
+fn acquire_debug_session(targets: &DebugTargets) -> Result<(), StatusCode> {
+    let mut active = targets.active_session.lock().map_err(|_| StatusCode(503))?;
+    if *active {
+        return Err(StatusCode(409));
+    }
+    *active = true;
+    Ok(())
+}
+
+fn release_debug_session(targets: &DebugTargets) {
+    if let Ok(mut active) = targets.active_session.lock() {
+        *active = false;
+    }
+}
+
+fn run_debug_websocket<S>(stream: S, targets: &Arc<DebugTargets>)
+where
+    S: Read + Write,
+{
+    let mut socket =
+        tungstenite::WebSocket::from_raw_socket(stream, tungstenite::protocol::Role::Server, None);
+    loop {
+        match socket.read() {
+            Ok(Message::Text(message)) => {
+                let responses = targets
+                    .app
+                    .read()
+                    .map_err(|_| "Runtime app is unavailable".to_owned())
+                    .and_then(|app| {
+                        app.dispatch_inspector_message(message.as_str())
+                            .map_err(|error| error.to_string())
+                    });
+                match responses {
+                    Ok(responses) => {
+                        for response in responses {
+                            if socket.send(Message::Text(response.into())).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "CDP protocol message dispatch failed");
+                        break;
+                    }
+                }
+            }
+            Ok(Message::Ping(payload)) => {
+                if socket.send(Message::Pong(payload)).is_err() {
+                    break;
+                }
+            }
+            Ok(Message::Close(_)) | Err(_) => break,
+            Ok(Message::Binary(_) | Message::Pong(_) | Message::Frame(_)) => {}
+        }
+    }
+    let _ = socket.close(None);
+    release_debug_session(targets);
 }
 
 fn api_workbench(
@@ -214,16 +462,41 @@ fn api_project_info(
 fn api_inspect(
     request: &Request,
     current: &ActiveProject,
+    targets: &DebugTargets,
     query: &str,
 ) -> Result<(&'static str, String), (StatusCode, String)> {
     require_loopback_header(request)?;
     let route =
         query_value(query, "page").ok_or((StatusCode(400), "missing page route".to_owned()))?;
-    let preview = render_page(&current.root, Some(&route))
+    let project = sdkwork_miniprogram_package_loader::load_project(&current.root)
+        .map_err(|error| (StatusCode(422), format!("{error:?}")))?;
+    let (page_index, page) = project
+        .pages
+        .iter()
+        .enumerate()
+        .find(|(_, page)| page.route == route)
+        .ok_or((StatusCode(404), "page route not found".to_owned()))?;
+    let app = targets.app.read().map_err(|_| {
+        (
+            StatusCode(500),
+            "Runtime application is unavailable".to_owned(),
+        )
+    })?;
+    let inspection = render_project_page(&project, page, &app, page_index)
         .map_err(|error| (StatusCode(422), error.to_string()))?;
-    let inspection =
-        extract_page_inspection(&preview).map_err(|error| (StatusCode(500), error.to_string()))?;
-    Ok(("application/json; charset=utf-8", inspection.to_string()))
+    let payload = json!({
+        "route": inspection.route,
+        "pageData": inspection.page_data,
+        "console": inspection.console_events,
+        "network": inspection.network_events,
+        "target": inspection.target,
+        "protocolVersion": "sdkwork-miniprogram-inspector/0.1",
+        "debugCapabilities": inspection.debug_capabilities,
+        "renderTree": inspection.render_tree,
+        "computedStyles": inspection.computed_styles,
+        "diagnostics": inspection.style_diagnostics,
+    });
+    Ok(("application/json; charset=utf-8", payload.to_string()))
 }
 
 fn api_read_file(
@@ -250,17 +523,40 @@ fn api_read_file(
 fn api_preview(
     request: &Request,
     current: &ActiveProject,
+    targets: &DebugTargets,
     query: &str,
 ) -> Result<(&'static str, String), (StatusCode, String)> {
     require_loopback_header(request)?;
     let page = query_value(query, "page");
-    render_page(&current.root, page.as_deref())
-        .map(|html| ("text/html; charset=utf-8", html))
-        .map_err(|error| (StatusCode(422), error.to_string()))
+    let project = sdkwork_miniprogram_package_loader::load_project(&current.root)
+        .map_err(|error| (StatusCode(422), format!("{error:?}")))?;
+    let route = page
+        .or_else(|| project.manifest.entry_page_path.clone())
+        .or_else(|| project.pages.first().map(|page| page.route.clone()))
+        .ok_or((StatusCode(422), "project has no entry page".to_owned()))?;
+    let (page_index, page) = project
+        .pages
+        .iter()
+        .enumerate()
+        .find(|(_, page)| page.route == route)
+        .ok_or((StatusCode(404), "page route not found".to_owned()))?;
+    let app = targets.app.read().map_err(|_| {
+        (
+            StatusCode(500),
+            "Runtime application is unavailable".to_owned(),
+        )
+    })?;
+    let rendered = render_project_page(&project, page, &app, page_index)
+        .map_err(|error| (StatusCode(422), error.to_string()))?;
+    Ok((
+        "text/html; charset=utf-8",
+        super::viewer::generate_page_html(&current.name, &rendered),
+    ))
 }
 fn switch_project(
     request: &mut Request,
     active_project: &Arc<RwLock<ActiveProject>>,
+    targets: &Arc<DebugTargets>,
 ) -> Result<(&'static str, String), (StatusCode, String)> {
     let mut body = Vec::new();
     request
@@ -286,30 +582,48 @@ fn switch_project(
             format!("project path is unavailable: {error}"),
         )
     })?;
-    let project =
-        sdkwork_miniprogram_package_loader::load_project(&canonical_root).map_err(|error| {
-            (
-                StatusCode(422),
-                format!("project validation failed: {error:?}"),
-            )
-        })?;
-    let name = project
-        .root
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("Mini Program")
-        .to_owned();
-    let project_root = project.root;
-    let active_project_name = name;
-    let search_root = project_root.parent().unwrap_or(&project_root).to_path_buf();
+    let replacement_id = format!(
+        "mini-program:{}",
+        canonical_root
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+    );
+    let replacement = create_runtime_application(
+        &canonical_root,
+        &replacement_id,
+        canonical_root
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .as_ref(),
+    )
+    .map_err(|error| {
+        (
+            StatusCode(422),
+            format!("project validation failed: {error}"),
+        )
+    })?;
+    let active_project_name = replacement.name.clone();
+    let project_root = replacement.root.clone();
+    let app = replacement.app.clone();
     *active_project
         .write()
-        .map_err(|_| (StatusCode(500), "project state is unavailable".to_owned()))? =
-        ActiveProject {
-            root: project_root.clone(),
-            search_root,
-            name: active_project_name.clone(),
-        };
+        .map_err(|_| (StatusCode(500), "project state is unavailable".to_owned()))? = replacement;
+    let replacement_app = app
+        .read()
+        .map_err(|_| {
+            (
+                StatusCode(500),
+                "Runtime application is unavailable".to_owned(),
+            )
+        })?
+        .clone();
+    *targets
+        .app
+        .write()
+        .map_err(|_| (StatusCode(500), "debug target is unavailable".to_owned()))? =
+        replacement_app;
     Ok((
         "application/json; charset=utf-8",
         json!({"rootName": active_project_name, "rootPath": project_root}).to_string(),
@@ -357,6 +671,57 @@ fn is_loopback_request(request: &Request) -> bool {
         return false;
     };
     host.starts_with("127.0.0.1:") || host.starts_with("localhost:")
+}
+
+fn create_runtime_application(
+    root: &Path,
+    app_id: &str,
+    display_name: &str,
+) -> Result<ActiveProject, Box<dyn Error>> {
+    use sdkwork_miniprogram_execution_engine::{ApplicationManifest, RuntimeBuilder};
+    use sdkwork_miniprogram_package_loader::load_project;
+
+    let project = load_project(root)?;
+    let pages = project
+        .pages
+        .iter()
+        .map(|page| page.route.clone())
+        .collect::<Vec<_>>();
+    let entry_page = project
+        .manifest
+        .entry_page_path
+        .clone()
+        .unwrap_or_else(|| pages[0].clone());
+    let runtime = RuntimeBuilder::new().build()?;
+    let application = runtime.load_application(ApplicationManifest {
+        app_id: app_id.to_owned(),
+        version: "0.0.0-preview".to_owned(),
+        entry_page,
+        pages,
+    })?;
+    let app_source = String::from_utf8(
+        project.read_file(project.app_script_path.strip_prefix(&project.root)?)?,
+    )?;
+    application.register_javascript_source("app.js", &app_source)?;
+    register_pages(&application, &project)?;
+    application.launch()?;
+    let _ = application.invoke_app_lifecycle("onLaunch")?;
+    application.show()?;
+    let _ = application.invoke_app_lifecycle("onShow")?;
+    let entry_index = project
+        .pages
+        .iter()
+        .position(|page| page.route == application.manifest().entry_page)
+        .ok_or("entry page is missing from loaded project")?;
+    let _ = application.invoke_page_lifecycle(entry_index, "onLoad")?;
+    let _ = application.invoke_page_lifecycle(entry_index, "onShow")?;
+    Ok(ActiveProject {
+        root: project.root.clone(),
+        search_root: project.root.parent().unwrap_or(&project.root).to_path_buf(),
+        name: display_name.to_owned(),
+        app_id: app_id.to_owned(),
+        app: Arc::new(RwLock::new(application)),
+    })
 }
 
 fn tree_entries(
@@ -434,7 +799,8 @@ fn safe_existing_file(root: &Path, relative: &str) -> Result<PathBuf, (StatusCod
 
 fn save_file(
     request: &mut Request,
-    root: &Path,
+    active_project: &Arc<RwLock<ActiveProject>>,
+    targets: &Arc<DebugTargets>,
 ) -> Result<(&'static str, String), (StatusCode, String)> {
     let mut body = Vec::new();
     request
@@ -455,8 +821,45 @@ fn save_file(
         .get("content")
         .and_then(Value::as_str)
         .ok_or((StatusCode(400), "missing file content".to_owned()))?;
-    let path = safe_existing_file(root, relative)?;
+    let current = active_project
+        .read()
+        .map_err(|_| (StatusCode(500), "project state is unavailable".to_owned()))?
+        .clone();
+    let path = safe_existing_file(&current.root, relative)?;
     fs::write(&path, content).map_err(|error| (StatusCode(500), error.to_string()))?;
+    if matches!(
+        Path::new(relative)
+            .extension()
+            .and_then(|value| value.to_str()),
+        Some("js" | "ts")
+    ) {
+        let replacement = create_runtime_application(&current.root, &current.app_id, &current.name)
+            .map_err(|error| {
+                (
+                    StatusCode(422),
+                    format!("saved file but Runtime reload failed: {error}"),
+                )
+            })?;
+        let replacement_app = replacement
+            .app
+            .read()
+            .map_err(|_| {
+                (
+                    StatusCode(500),
+                    "Runtime application is unavailable".to_owned(),
+                )
+            })?
+            .clone();
+        *targets
+            .app
+            .write()
+            .map_err(|_| (StatusCode(500), "debug target is unavailable".to_owned()))? =
+            replacement_app;
+        *active_project
+            .write()
+            .map_err(|_| (StatusCode(500), "project state is unavailable".to_owned()))? =
+            replacement;
+    }
     Ok((
         "application/json; charset=utf-8",
         json!({"saved": true}).to_string(),
@@ -502,65 +905,6 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn render_page(root: &Path, requested_page: Option<&str>) -> Result<String, Box<dyn Error>> {
-    use sdkwork_miniprogram_execution_engine::{ApplicationManifest, RuntimeBuilder};
-    use sdkwork_miniprogram_package_loader::load_project;
-
-    let project = load_project(root)?;
-    let pages = project
-        .pages
-        .iter()
-        .map(|page| page.route.clone())
-        .collect::<Vec<_>>();
-    let entry_page = requested_page
-        .filter(|route| pages.iter().any(|page| page == route))
-        .map_or_else(
-            || {
-                project
-                    .manifest
-                    .entry_page_path
-                    .clone()
-                    .unwrap_or_else(|| pages[0].clone())
-            },
-            str::to_owned,
-        );
-    let app_id = project
-        .root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("preview");
-    let application = RuntimeBuilder::new()
-        .build()?
-        .load_application(ApplicationManifest {
-            app_id: app_id.to_owned(),
-            version: "0.0.0-preview".to_owned(),
-            entry_page: entry_page.clone(),
-            pages,
-        })?;
-    let app_script = String::from_utf8(
-        project.read_file(project.app_script_path.strip_prefix(&project.root)?)?,
-    )?;
-    application.register_javascript_source("app.js", &app_script)?;
-    register_pages(&application, &project)?;
-    application.launch()?;
-    let _ = application.invoke_app_lifecycle("onLaunch")?;
-    application.show()?;
-    let _ = application.invoke_app_lifecycle("onShow")?;
-    let (page_index, page) = project
-        .pages
-        .iter()
-        .enumerate()
-        .find(|(_, page)| page.route == entry_page)
-        .ok_or("entry page was not found")?;
-    let _ = application.invoke_page_lifecycle(page_index, "onLoad")?;
-    let _ = application.invoke_page_lifecycle(page_index, "onShow")?;
-    let rendered = render_project_page(&project, page, &application, page_index)?;
-    Ok(super::viewer::generate_page_html(
-        project_name_for(&project.root),
-        &rendered,
-    ))
-}
-
 fn register_pages(
     application: &sdkwork_miniprogram_execution_engine::ApplicationHandle,
     project: &sdkwork_miniprogram_package_loader::MiniProgramProject,
@@ -595,6 +939,7 @@ fn render_project_page(
     );
     let page_data =
         application.javascript_registration_snapshot()?["pages"][page_index]["data"].clone();
+    let debug = application.javascript_debug_snapshot()?;
     let rendered = sdkwork_miniprogram_headless_renderer::build_with_data(
         &tree,
         page.template_path.display().to_string(),
@@ -607,6 +952,13 @@ fn render_project_page(
         computed_styles: serde_json::to_value(style_tree.computed_styles)?,
         style_diagnostics: serde_json::to_value(style_tree.diagnostics)?,
         page_data,
+        console_events: debug.get("console").cloned().unwrap_or_else(|| json!([])),
+        network_events: debug.get("network").cloned().unwrap_or_else(|| json!([])),
+        target: debug.get("target").cloned().unwrap_or_else(|| json!({})),
+        debug_capabilities: debug
+            .get("capabilities")
+            .cloned()
+            .unwrap_or_else(|| json!({})),
     })
 }
 
@@ -635,25 +987,4 @@ fn read_page_styles(
         styles.push_str(&page_styles);
     }
     Ok(styles)
-}
-
-fn project_name_for(root: &Path) -> &str {
-    root.file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("Mini Program")
-}
-
-fn extract_page_inspection(html: &str) -> Result<Value, Box<dyn Error>> {
-    let body_start = html
-        .find("<script id=\"inspector-data\"")
-        .ok_or("missing inspector payload")?;
-    let start = html[body_start..]
-        .find('>')
-        .map(|position| body_start + position + 1)
-        .ok_or("invalid inspector payload")?;
-    let end = html[start..]
-        .find("</script>")
-        .ok_or("invalid inspector payload")?
-        + start;
-    Ok(serde_json::from_str(&html[start..end])?)
 }
