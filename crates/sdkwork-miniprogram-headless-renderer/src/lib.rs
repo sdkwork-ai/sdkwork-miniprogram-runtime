@@ -9,8 +9,12 @@ use std::collections::BTreeMap;
 use sdkwork_miniprogram_wxml_compiler::{AttributeValue, Document, Node, Span, ValuePart};
 use serde::Serialize;
 
+mod data_render;
 mod styles;
 
+pub use data_render::{
+    DataRenderDiagnostic, DataRenderDiagnosticKind, DataRenderTree, build_with_data,
+};
 pub use styles::{StyleDiagnostic, StyleDiagnosticKind, StyleSourceSpan, StyledRenderTree};
 
 /// A stable, serializable structural tree generated from one WXML document.
@@ -316,9 +320,10 @@ mod tests {
         );
 
         assert!(styled.computed_styles.is_empty());
-        assert_eq!(styled.diagnostics.len(), 2, "{:#?}", styled.diagnostics);
+        assert_eq!(styled.diagnostics.len(), 3);
         assert_eq!(styled.diagnostics[0].span.line, 1);
         assert_eq!(styled.diagnostics[1].span.line, 2);
+        assert_eq!(styled.diagnostics[2].span.line, 3);
         Ok(())
     }
 }

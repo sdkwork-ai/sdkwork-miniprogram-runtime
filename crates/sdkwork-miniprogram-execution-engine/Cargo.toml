@@ -13,6 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 sdkwork-miniprogram-v8-adapter.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 
 [lints]

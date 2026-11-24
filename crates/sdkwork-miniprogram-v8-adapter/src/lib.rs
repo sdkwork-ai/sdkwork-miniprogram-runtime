@@ -15,6 +15,40 @@ pub const DEFAULT_MAX_HEAP_BYTES: usize = 64 * 1024 * 1024;
 /// Default deadline applied by [`evaluate`].
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
+const MINI_PROGRAM_BOOTSTRAP: &str = r"
+globalThis.__sdkworkMiniProgram = {
+  app: null, pages: [], components: [], appSource: null, pageSources: [], componentSources: [],
+};
+const __sdkworkPrepareDefinition = definition => {
+  definition.data = { ...(definition.data ?? {}) };
+  definition.setData = function(update, callback) {
+    Object.assign(this.data, update ?? {});
+    if (typeof callback === 'function') callback.call(this);
+  };
+  return definition;
+};
+globalThis.console = Object.freeze({
+  log() {}, info() {}, warn() {}, error() {}, debug() {},
+});
+globalThis.App = function(definition) {
+  if (globalThis.__sdkworkMiniProgram.app !== null) {
+    throw new Error('App may only be registered once');
+  }
+  globalThis.__sdkworkMiniProgram.app = definition;
+  return definition;
+};
+globalThis.Page = function(definition) {
+  definition = __sdkworkPrepareDefinition(definition);
+  globalThis.__sdkworkMiniProgram.pages.push(definition);
+  return definition;
+};
+globalThis.Component = function(definition) {
+  definition = __sdkworkPrepareDefinition(definition);
+  globalThis.__sdkworkMiniProgram.components.push(definition);
+  return definition;
+};
+";
+
 /// Errors returned by the V8 adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum V8Error {
@@ -31,6 +65,13 @@ pub enum V8Error {
     InvalidResourceLimit {
         /// Name of the rejected resource limit.
         resource: &'static str,
+    },
+    /// A registered application source failed during compilation or execution.
+    SourceFailure {
+        /// Project-relative source file name supplied by the caller.
+        source_name: String,
+        /// Underlying execution error.
+        cause: Box<V8Error>,
     },
     /// JavaScript compilation failed.
     Compile(String),
@@ -65,6 +106,12 @@ impl std::fmt::Display for V8Error {
                 write!(
                     formatter,
                     "JavaScript resource limit `{resource}` must be positive"
+                )
+            }
+            Self::SourceFailure { source_name, cause } => {
+                write!(
+                    formatter,
+                    "JavaScript source `{source_name}` failed: {cause}"
                 )
             }
             Self::Compile(message) => write!(formatter, "JavaScript compilation failed: {message}"),
@@ -158,7 +205,14 @@ impl JavaScriptContext {
             .name("sdkwork-v8-context".to_owned())
             .spawn(move || context_worker(command_receiver, handle_sender, max_heap_bytes))
             .map_err(|error| V8Error::Initialization(error.to_string()))?;
-        let isolate = handle_receiver.recv().map_err(|_| V8Error::WorkerStopped)?;
+        let isolate = handle_receiver
+            .recv_timeout(timeout)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout => V8Error::ExecutionTimeout {
+                    timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                },
+                mpsc::RecvTimeoutError::Disconnected => V8Error::WorkerStopped,
+            })??;
         Ok(Self {
             commands: command_sender,
             isolate,
@@ -180,6 +234,10 @@ impl JavaScriptContext {
                 maximum: self.max_source_bytes,
             });
         }
+        self.evaluate_unchecked(source)
+    }
+
+    fn evaluate_unchecked(&mut self, source: &str) -> Result<String> {
         if self.terminated {
             return Err(V8Error::WorkerStopped);
         }
@@ -205,21 +263,128 @@ impl JavaScriptContext {
             }
         }
     }
+
+    /// Register one mini-program JavaScript source file using the `App`, `Page` or `Component` shim.
+    ///
+    /// The function records the resulting definition, including its original source path.
+    /// The shims are registration helpers only and do not implement framework lifecycle behavior.
+    ///
+    /// # Errors
+    /// Returns an error for an oversized source, duplicate app registration, syntax failure,
+    /// timeout or stopped worker.
+    pub fn register_source(&mut self, source_name: &str, source: &str) -> Result<()> {
+        if source.len() > self.max_source_bytes {
+            return Err(V8Error::SourceTooLarge {
+                size: source.len(),
+                maximum: self.max_source_bytes,
+            });
+        }
+        let source_json = serde_json::to_string(source_name)
+            .map_err(|error| V8Error::Initialization(error.to_string()))?;
+        let wrapped = format!("(function() {{\n{source}\n}})()");
+        if wrapped.len() > self.max_source_bytes {
+            return Err(V8Error::SourceTooLarge {
+                size: wrapped.len(),
+                maximum: self.max_source_bytes,
+            });
+        }
+        self.evaluate_unchecked(&wrapped)
+            .map_err(|cause| V8Error::SourceFailure {
+                source_name: source_name.to_owned(),
+                cause: Box::new(cause),
+            })?;
+        let record = format!(
+            "(() => {{ const state = globalThis.__sdkworkMiniProgram; const name = {source_json}; if (state.app && state.appSource === null) state.appSource = name; while (state.pageSources.length < state.pages.length) state.pageSources.push(name); while (state.componentSources.length < state.components.length) state.componentSources.push(name); return 'registered'; }})()"
+        );
+        self.evaluate(&record)
+            .map_err(|cause| V8Error::SourceFailure {
+                source_name: source_name.to_owned(),
+                cause: Box::new(cause),
+            })?;
+        Ok(())
+    }
+
+    /// Return a JSON-compatible snapshot of registered app, page and component definitions.
+    ///
+    /// # Errors
+    /// Returns an error if evaluating the snapshot fails.
+    pub fn registration_snapshot(&mut self) -> Result<serde_json::Value> {
+        let source = r"JSON.stringify(globalThis.__sdkworkMiniProgram, (key, value) => {
+          if (typeof value === 'function') {
+            const result = {};
+            for (const [name, child] of Object.entries(value)) {
+              if (name !== '__sdkworkSourcePath') result[name] = child;
+            }
+            result.__function = value.toString();
+            if (value.__sdkworkSourcePath) result.__sourcePath = value.__sdkworkSourcePath;
+            return result;
+          }
+          if (key === 'data') return value;
+          return value;
+        })";
+        let json = self.evaluate(source)?;
+        serde_json::from_str(&json).map_err(|error| {
+            V8Error::Execution(format!("registration snapshot is invalid JSON: {error}"))
+        })
+    }
+
+    /// Invoke a named lifecycle method on the registered application definition when it exists.
+    ///
+    /// # Errors
+    /// Returns an error if source evaluation or the callback fails.
+    pub fn invoke_app_callback(&mut self, method: &str) -> Result<Option<String>> {
+        let method = serde_json::to_string(method)
+            .map_err(|error| V8Error::Initialization(error.to_string()))?;
+        let source = format!(
+            "(() => {{ const app = globalThis.__sdkworkMiniProgram.app; const callback = app?.[{method}]; return typeof callback === 'function' ? String(callback.call(app)) : null; }})()"
+        );
+        match self.evaluate(&source)?.as_str() {
+            "null" => Ok(None),
+            value => Ok(Some(value.to_owned())),
+        }
+    }
+
+    /// Invoke a named lifecycle method on a registered page definition when it exists.
+    ///
+    /// # Errors
+    /// Returns an error if the page index is missing or callback evaluation fails.
+    pub fn invoke_page_callback(
+        &mut self,
+        page_index: usize,
+        method: &str,
+    ) -> Result<Option<String>> {
+        let method = serde_json::to_string(method)
+            .map_err(|error| V8Error::Initialization(error.to_string()))?;
+        let source = format!(
+            "(() => {{ const page = globalThis.__sdkworkMiniProgram.pages[{page_index}]; if (!page) throw new Error('page registration index is missing'); const callback = page[{method}]; return typeof callback === 'function' ? String(callback.call(page, {{}})) : null; }})()"
+        );
+        match self.evaluate(&source)?.as_str() {
+            "null" => Ok(None),
+            value => Ok(Some(value.to_owned())),
+        }
+    }
 }
 
 // The spawned thread must own its channel endpoints for its entire lifetime.
 #[allow(clippy::needless_pass_by_value)]
 fn context_worker(
     commands: mpsc::Receiver<ContextCommand>,
-    handle_sender: mpsc::SyncSender<v8::IsolateHandle>,
+    handle_sender: mpsc::SyncSender<Result<v8::IsolateHandle>>,
     max_heap_bytes: usize,
 ) {
     let create_params = v8::CreateParams::default().heap_limits(0, max_heap_bytes);
     let isolate = &mut v8::Isolate::new(create_params);
-    if handle_sender.send(isolate.thread_safe_handle()).is_err() {
+    let context = create_context(isolate);
+    if let Err(error) = evaluate_in_context(isolate, &context, MINI_PROGRAM_BOOTSTRAP) {
+        let _ = handle_sender.send(Err(error));
         return;
     }
-    let context = create_context(isolate);
+    if handle_sender
+        .send(Ok(isolate.thread_safe_handle()))
+        .is_err()
+    {
+        return;
+    }
 
     while let Ok(ContextCommand::Evaluate { source, result }) = commands.recv() {
         let evaluation = evaluate_in_context(isolate, &context, &source);
@@ -510,5 +675,38 @@ mod tests {
                 resource: "max_heap_bytes"
             })
         );
+    }
+
+    #[test]
+    fn registers_app_and_page_definitions_and_exposes_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut context = super::JavaScriptContext::new()?;
+        context.register_source("app.js", "App({ globalData: { count: 0 } });")?;
+        context.register_source(
+            "pages/home/index.js",
+            "Page({ data: { title: 'Hello' }, onLoad() { this.data.loaded = true; } });",
+        )?;
+        let snapshot = context.registration_snapshot()?;
+        assert_eq!(snapshot["appSource"], "app.js");
+        assert_eq!(snapshot["app"]["globalData"]["count"], 0);
+        assert_eq!(snapshot["pages"][0]["data"]["title"], "Hello");
+        assert_eq!(snapshot["pageSources"][0], "pages/home/index.js");
+        context.invoke_page_callback(0, "onLoad")?;
+        let snapshot = context.registration_snapshot()?;
+        assert_eq!(snapshot["pages"][0]["data"]["loaded"], true);
+        Ok(())
+    }
+
+    #[test]
+    fn attributes_script_errors_to_source_path() -> Result<(), Box<dyn std::error::Error>> {
+        let mut context = super::JavaScriptContext::new()?;
+        assert!(matches!(
+            context.register_source("pages/broken/index.js", "Page({ invalid: });"),
+            Err(V8Error::SourceFailure {
+                source_name,
+                cause
+            }) if source_name == "pages/broken/index.js" && matches!(*cause, V8Error::Compile(_))
+        ));
+        Ok(())
     }
 }

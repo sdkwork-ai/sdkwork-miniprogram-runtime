@@ -122,46 +122,14 @@ fn inspect_project(root: &std::path::Path) -> Result<(), Box<dyn Error>> {
     };
     let runtime = RuntimeBuilder::new().build()?;
     let application = runtime.load_application(manifest)?;
+    register_project_scripts(&application, &project)?;
     application.launch()?;
+    let app_on_launch = application.invoke_app_lifecycle("onLaunch")?;
     application.show()?;
-
+    let app_on_show = application.invoke_app_lifecycle("onShow")?;
     let mut page_results = Vec::with_capacity(project.pages.len());
-    for page in &project.pages {
-        let source =
-            String::from_utf8(project.read_file(page.template_path.strip_prefix(&project.root)?)?)?;
-        let tree = sdkwork_miniprogram_wxml_compiler::parse(
-            page.template_path.display().to_string(),
-            &source,
-        )?;
-        let style_source = page
-            .style_path
-            .as_ref()
-            .map(|path| {
-                let relative_path = path.strip_prefix(&project.root).map_err(io::Error::other)?;
-                let source = project.read_file(relative_path).map_err(io::Error::other)?;
-                String::from_utf8(source).map_err(io::Error::other)
-            })
-            .transpose()?;
-        let styled_tree = sdkwork_miniprogram_headless_renderer::build_with_styles(
-            &tree,
-            page.style_path.as_ref().map_or_else(
-                || String::from("<missing>"),
-                |path| path.display().to_string(),
-            ),
-            style_source.as_deref().unwrap_or_default(),
-        );
-        page_results.push(serde_json::json!({
-            "route": page.route,
-            "wxmlNodes": tree.children.len(),
-            "renderNodeCount": styled_tree.tree.node_count,
-            "renderTree": styled_tree.tree,
-            "computedStyles": styled_tree.computed_styles,
-            "styleDiagnostics": styled_tree.diagnostics,
-            "wxssAvailable": page.style_path.is_some(),
-            "javascriptBytes": project.read_file(
-                page.script_path.strip_prefix(&project.root)?
-            )?.len()
-        }));
+    for (page_index, page) in project.pages.iter().enumerate() {
+        page_results.push(inspect_page(&application, &project, page, page_index)?);
     }
     let output = serde_json::json!({
         "projectRoot": project.root,
@@ -169,6 +137,11 @@ fn inspect_project(root: &std::path::Path) -> Result<(), Box<dyn Error>> {
         "appScriptAvailable": project.app_script_path.exists(),
         "appStyleAvailable": project.app_style_path.is_some(),
         "pages": page_results,
+        "appLifecycle": {
+            "onLaunchResult": app_on_launch,
+            "onShowResult": app_on_show
+        },
+        "javascriptRegistrations": application.javascript_registration_snapshot()?,
         "capabilities": {
             "projectInspection": "tested",
             "wxmlStructuralParsing": "partial",
@@ -185,6 +158,99 @@ fn inspect_project(root: &std::path::Path) -> Result<(), Box<dyn Error>> {
     application.hide()?;
     runtime.unload_application(application.app_id())?;
     Ok(())
+}
+
+fn register_project_scripts(
+    application: &sdkwork_miniprogram_execution_engine::ApplicationHandle,
+    project: &sdkwork_miniprogram_package_loader::MiniProgramProject,
+) -> Result<(), Box<dyn Error>> {
+    let source = String::from_utf8(
+        project.read_file(project.app_script_path.strip_prefix(&project.root)?)?,
+    )?;
+    application.register_javascript_source("app.js", &source)?;
+    for page in &project.pages {
+        let source =
+            String::from_utf8(project.read_file(page.script_path.strip_prefix(&project.root)?)?)?;
+        application.register_javascript_source(&page.route, &source)?;
+    }
+    Ok(())
+}
+
+fn inspect_page(
+    application: &sdkwork_miniprogram_execution_engine::ApplicationHandle,
+    project: &sdkwork_miniprogram_package_loader::MiniProgramProject,
+    page: &sdkwork_miniprogram_package_loader::PageDefinition,
+    page_index: usize,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let source =
+        String::from_utf8(project.read_file(page.template_path.strip_prefix(&project.root)?)?)?;
+    let tree = sdkwork_miniprogram_wxml_compiler::parse(
+        page.template_path.display().to_string(),
+        &source,
+    )?;
+    let style_source = page
+        .style_path
+        .as_ref()
+        .map(|path| {
+            let relative_path = path.strip_prefix(&project.root).map_err(io::Error::other)?;
+            let source = project.read_file(relative_path).map_err(io::Error::other)?;
+            String::from_utf8(source).map_err(io::Error::other)
+        })
+        .transpose()?;
+    let styled_tree = sdkwork_miniprogram_headless_renderer::build_with_styles(
+        &tree,
+        page.style_path.as_ref().map_or_else(
+            || String::from("<missing>"),
+            |path| path.display().to_string(),
+        ),
+        style_source.as_deref().unwrap_or_default(),
+    );
+    let registrations = application.javascript_registration_snapshot()?;
+    let registered_pages = registrations["pages"].as_array();
+    let registered_page = registered_pages.and_then(|pages| pages.get(page_index));
+    let has_registered_page = registered_page.is_some();
+    let page_on_load = if has_registered_page {
+        application.invoke_page_lifecycle(page_index, "onLoad")?
+    } else {
+        None
+    };
+    let page_on_show = if has_registered_page {
+        application.invoke_page_lifecycle(page_index, "onShow")?
+    } else {
+        None
+    };
+    let page_data_after_lifecycle = application.javascript_registration_snapshot()?["pages"]
+        .as_array()
+        .and_then(|pages| pages.get(page_index))
+        .and_then(|page| page.get("data"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let data_render = sdkwork_miniprogram_headless_renderer::build_with_data(
+        &tree,
+        page.template_path.display().to_string(),
+        &page_data_after_lifecycle,
+        1_000,
+    );
+    let javascript_bytes = project
+        .read_file(page.script_path.strip_prefix(&project.root)?)?
+        .len();
+    Ok(serde_json::json!({
+        "route": page.route,
+        "wxmlNodes": tree.children.len(),
+        "renderNodeCount": styled_tree.tree.node_count,
+        "renderTree": styled_tree.tree,
+        "dataRenderTree": data_render.tree,
+        "dataRenderDiagnostics": data_render.diagnostics,
+        "pageData": page_data_after_lifecycle,
+        "computedStyles": styled_tree.computed_styles,
+        "styleDiagnostics": styled_tree.diagnostics,
+        "lifecycle": {
+            "onLoadResult": page_on_load,
+            "onShowResult": page_on_show
+        },
+        "wxssAvailable": page.style_path.is_some(),
+        "javascriptBytes": javascript_bytes
+    }))
 }
 
 fn parse_wxml(path: &std::path::Path) -> Result<(), Box<dyn Error>> {

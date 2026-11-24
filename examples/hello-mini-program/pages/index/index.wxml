@@ -1,4 +1,5 @@
 <view class="page">
   <text>{{title}}</text>
+  <text wx:if="{{loaded}}">Ready</text>
   <button bindtap="onTap">Continue</button>
 </view>

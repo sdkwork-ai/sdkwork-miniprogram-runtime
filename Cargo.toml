@@ -38,6 +38,13 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 v8 = "152.2.0"
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 
+[workspace.metadata.cargo-deny.workspace-dependencies]
+sdkwork-miniprogram-execution-engine = "crates/sdkwork-miniprogram-execution-engine/Cargo.toml"
+sdkwork-miniprogram-headless-renderer = "crates/sdkwork-miniprogram-headless-renderer/Cargo.toml"
+sdkwork-miniprogram-package-loader = "crates/sdkwork-miniprogram-package-loader/Cargo.toml"
+sdkwork-miniprogram-v8-adapter = "crates/sdkwork-miniprogram-v8-adapter/Cargo.toml"
+sdkwork-miniprogram-wxml-compiler = "crates/sdkwork-miniprogram-wxml-compiler/Cargo.toml"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unsafe_op_in_unsafe_fn = "deny"

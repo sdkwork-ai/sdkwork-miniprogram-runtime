@@ -613,6 +613,7 @@ name = "sdkwork-miniprogram-execution-engine"
 version = "0.1.0"
 dependencies = [
  "sdkwork-miniprogram-v8-adapter",
+ "serde_json",
  "tracing",
 ]
 
@@ -654,6 +655,7 @@ dependencies = [
 name = "sdkwork-miniprogram-v8-adapter"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "tracing",
  "v8",
 ]

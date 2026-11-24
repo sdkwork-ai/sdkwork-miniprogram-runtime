@@ -65,6 +65,63 @@ fn applications_have_independent_storage_namespaces() -> Result<(), RuntimeError
 }
 
 #[test]
+fn applications_have_independent_virtual_filesystems_and_unload_closes_handles()
+-> Result<(), Box<dyn std::error::Error>> {
+    let runtime = runtime()?;
+    let first = runtime.load_application(manifest("files-first"))?;
+    let second = runtime.load_application(manifest("files-second"))?;
+    let first_files = first.file_system();
+    let second_files = second.file_system();
+    first_files.write_file("documents/readme.txt", b"private")?;
+
+    assert_eq!(
+        first_files.read_file("documents/readme.txt")?,
+        Some(b"private".to_vec())
+    );
+    assert_eq!(second_files.read_file("documents/readme.txt")?, None);
+    runtime.unload_application("files-first")?;
+    assert!(matches!(
+        first_files.read_file("documents/readme.txt"),
+        Err(RuntimeError::ApplicationFileSystemClosed { .. })
+    ));
+    assert_eq!(second_files.file_count()?, 0);
+    Ok(())
+}
+
+#[test]
+fn runtime_applies_virtual_filesystem_budgets() -> Result<(), Box<dyn std::error::Error>> {
+    let config = RuntimeConfig {
+        resource_budget: ResourceBudget {
+            max_files_per_application: 1,
+            max_file_bytes: 4,
+            max_total_file_bytes: 5,
+            ..ResourceBudget::default()
+        },
+        ..RuntimeConfig::default()
+    };
+    let runtime = RuntimeBuilder::new().config(config).build()?;
+    let app = runtime.load_application(manifest("files-quota"))?;
+    let files = app.file_system();
+    files.write_file("first.bin", b"1234")?;
+    assert!(matches!(
+        files.write_file("first.bin", b"12345"),
+        Err(RuntimeError::FileSystemQuotaExceeded {
+            quota: "max_file_bytes",
+            ..
+        })
+    ));
+    assert!(matches!(
+        files.write_file("second.bin", b"x"),
+        Err(RuntimeError::FileSystemQuotaExceeded {
+            quota: "max_files_per_application",
+            ..
+        })
+    ));
+    assert_eq!(files.total_bytes()?, 4);
+    Ok(())
+}
+
+#[test]
 fn application_javascript_state_persists_and_is_isolated() -> Result<(), Box<dyn std::error::Error>>
 {
     let runtime = runtime()?;

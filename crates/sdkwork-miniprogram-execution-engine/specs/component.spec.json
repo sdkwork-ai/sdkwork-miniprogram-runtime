@@ -21,22 +21,23 @@
   ],
   "contracts": {
     "layerRole": "runtime-composition",
-    "publicExports": ["RuntimeBuilder", "Runtime", "ApplicationHandle", "ApplicationStorage", "NavigationFailure"],
+    "publicExports": ["RuntimeBuilder", "Runtime", "ApplicationHandle", "ApplicationStorage", "ApplicationVirtualFileSystem", "VirtualFileMetadata", "VirtualDirectoryEntry", "NavigationFailure"],
     "providedPorts": [
       { "name": "runtimeBuilder", "export": "RuntimeBuilder" },
       { "name": "applicationLifecycle", "export": "ApplicationHandle" },
       { "name": "applicationStorage", "export": "ApplicationStorage" },
-      { "name": "applicationJavaScript", "export": "ApplicationHandle::evaluate_javascript" }
+      { "name": "applicationVirtualFileSystem", "export": "ApplicationVirtualFileSystem" },
+      { "name": "applicationJavaScript", "export": "ApplicationHandle" }
     ],
     "requiredPorts": [],
-    "runtimeEntrypoints": ["RuntimeBuilder::build", "Runtime::load_application", "ApplicationHandle::launch", "ApplicationHandle::show", "ApplicationHandle::hide", "ApplicationHandle::evaluate_javascript", "ApplicationHandle::navigate_to", "ApplicationHandle::redirect_to", "ApplicationHandle::navigate_back", "Runtime::unload_application", "Runtime::destroy_application"],
+    "runtimeEntrypoints": ["RuntimeBuilder::build", "Runtime::load_application", "ApplicationHandle::launch", "ApplicationHandle::show", "ApplicationHandle::hide", "ApplicationHandle::file_system", "ApplicationVirtualFileSystem::read_file", "ApplicationVirtualFileSystem::write_file", "ApplicationVirtualFileSystem::metadata", "ApplicationVirtualFileSystem::remove_file", "ApplicationVirtualFileSystem::list_directory", "ApplicationHandle::evaluate_javascript", "ApplicationHandle::register_javascript_source", "ApplicationHandle::javascript_registration_snapshot", "ApplicationHandle::invoke_app_lifecycle", "ApplicationHandle::invoke_page_lifecycle", "ApplicationHandle::navigate_to", "ApplicationHandle::redirect_to", "ApplicationHandle::navigate_back", "Runtime::unload_application", "Runtime::destroy_application"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],
     "dependencyApiExports": [],
     "dependencyApiSurfaces": [],
     "events": [],
-    "configKeys": []
+    "configKeys": ["max_files_per_application", "max_file_bytes", "max_total_file_bytes"]
   },
   "verification": {
     "commands": ["cargo test -p sdkwork-miniprogram-execution-engine", "cargo clippy -p sdkwork-miniprogram-execution-engine --all-targets -- -D warnings"]

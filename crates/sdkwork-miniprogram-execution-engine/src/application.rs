@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::info;
 
-use crate::{ApplicationStorage, Result, RuntimeError};
+use crate::{ApplicationStorage, ApplicationVirtualFileSystem, Result, RuntimeError};
 
 /// Application package metadata required to create an isolated runtime context.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +110,7 @@ pub(crate) struct ApplicationInner {
     pub manifest: ApplicationManifest,
     state: Mutex<ApplicationRuntimeState>,
     pub storage: ApplicationStorage,
+    pub file_system: ApplicationVirtualFileSystem,
     max_page_stack_depth: usize,
     max_javascript_source_bytes: usize,
     max_javascript_heap_bytes: usize,
@@ -133,6 +134,7 @@ impl ApplicationHandle {
     pub(crate) fn new(
         manifest: ApplicationManifest,
         storage: ApplicationStorage,
+        file_system: ApplicationVirtualFileSystem,
         max_page_stack_depth: usize,
         max_javascript_source_bytes: usize,
         max_javascript_heap_bytes: usize,
@@ -147,6 +149,7 @@ impl ApplicationHandle {
                 }),
                 manifest,
                 storage,
+                file_system,
                 max_page_stack_depth,
                 max_javascript_source_bytes,
                 max_javascript_heap_bytes,
@@ -187,6 +190,12 @@ impl ApplicationHandle {
         self.inner.storage.clone()
     }
 
+    /// Return this application's isolated in-memory virtual filesystem handle.
+    #[must_use]
+    pub fn file_system(&self) -> ApplicationVirtualFileSystem {
+        self.inner.file_system.clone()
+    }
+
     /// Evaluate JavaScript in this application's persistent, isolated V8 context.
     ///
     /// The context is created on first use and remains available through reloads. It is
@@ -216,23 +225,153 @@ impl ApplicationHandle {
                 operation: "evaluate_javascript",
             });
         }
-        let context = match &mut state.javascript {
-            Some(context) => context,
-            None => {
-                let context = JavaScriptContext::with_options(
-                    self.inner.max_javascript_source_bytes,
-                    self.inner.max_javascript_heap_bytes,
-                    self.inner.javascript_timeout,
-                )
-                .map_err(|reason| RuntimeError::JavaScriptExecution {
-                    app_id: self.app_id().to_owned(),
-                    reason,
-                })?;
-                state.javascript.insert(context)
-            }
+        let context = if let Some(context) = &mut state.javascript {
+            context
+        } else {
+            let context = JavaScriptContext::with_options(
+                self.inner.max_javascript_source_bytes,
+                self.inner.max_javascript_heap_bytes,
+                self.inner.javascript_timeout,
+            )
+            .map_err(|reason| RuntimeError::JavaScriptExecution {
+                app_id: self.app_id().to_owned(),
+                reason,
+            })?;
+            state.javascript.insert(context)
         };
         context
             .evaluate(source)
+            .map_err(|reason| RuntimeError::JavaScriptExecution {
+                app_id: self.app_id().to_owned(),
+                reason,
+            })
+    }
+
+    /// Register an application or page source file in this application's persistent JS context.
+    ///
+    /// # Errors
+    /// Returns a structured JS execution error or an invalid lifecycle error.
+    pub fn register_javascript_source(&self, source_name: &str, source: &str) -> Result<()> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application state",
+            })?;
+        if !matches!(
+            state.lifecycle,
+            ApplicationState::Loaded
+                | ApplicationState::Launched
+                | ApplicationState::Visible
+                | ApplicationState::Hidden
+        ) {
+            return Err(RuntimeError::InvalidState {
+                app_id: self.app_id().to_owned(),
+                state: format!("{:?}", state.lifecycle),
+                operation: "register_javascript_source",
+            });
+        }
+        let context = if let Some(context) = &mut state.javascript {
+            context
+        } else {
+            let context = JavaScriptContext::with_options(
+                self.inner.max_javascript_source_bytes,
+                self.inner.max_javascript_heap_bytes,
+                self.inner.javascript_timeout,
+            )
+            .map_err(|reason| RuntimeError::JavaScriptExecution {
+                app_id: self.app_id().to_owned(),
+                reason,
+            })?;
+            state.javascript.insert(context)
+        };
+        context
+            .register_source(source_name, source)
+            .map_err(|reason| RuntimeError::JavaScriptExecution {
+                app_id: self.app_id().to_owned(),
+                reason,
+            })
+    }
+
+    /// Return a JSON snapshot of registration definitions created by app and page scripts.
+    ///
+    /// # Errors
+    /// Returns a structured JS execution error or an invalid lifecycle error.
+    pub fn javascript_registration_snapshot(&self) -> Result<serde_json::Value> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application state",
+            })?;
+        let context =
+            state
+                .javascript
+                .as_mut()
+                .ok_or_else(|| RuntimeError::JavaScriptExecution {
+                    app_id: self.app_id().to_owned(),
+                    reason: sdkwork_miniprogram_v8_adapter::V8Error::WorkerStopped,
+                })?;
+        context
+            .registration_snapshot()
+            .map_err(|reason| RuntimeError::JavaScriptExecution {
+                app_id: self.app_id().to_owned(),
+                reason,
+            })
+    }
+
+    /// Invoke an application lifecycle method such as `onLaunch` or `onShow` when registered.
+    ///
+    /// # Errors
+    /// Returns an error when no application script context exists or callback execution fails.
+    pub fn invoke_app_lifecycle(&self, method: &str) -> Result<Option<String>> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application state",
+            })?;
+        let context =
+            state
+                .javascript
+                .as_mut()
+                .ok_or_else(|| RuntimeError::JavaScriptExecution {
+                    app_id: self.app_id().to_owned(),
+                    reason: sdkwork_miniprogram_v8_adapter::V8Error::WorkerStopped,
+                })?;
+        context
+            .invoke_app_callback(method)
+            .map_err(|reason| RuntimeError::JavaScriptExecution {
+                app_id: self.app_id().to_owned(),
+                reason,
+            })
+    }
+
+    /// Invoke a registered page lifecycle method such as `onLoad`.
+    ///
+    /// # Errors
+    /// Returns an error when the page index is missing, no script context exists or callback fails.
+    pub fn invoke_page_lifecycle(&self, page_index: usize, method: &str) -> Result<Option<String>> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| RuntimeError::LockPoisoned {
+                resource: "application state",
+            })?;
+        let context =
+            state
+                .javascript
+                .as_mut()
+                .ok_or_else(|| RuntimeError::JavaScriptExecution {
+                    app_id: self.app_id().to_owned(),
+                    reason: sdkwork_miniprogram_v8_adapter::V8Error::WorkerStopped,
+                })?;
+        context
+            .invoke_page_callback(page_index, method)
             .map_err(|reason| RuntimeError::JavaScriptExecution {
                 app_id: self.app_id().to_owned(),
                 reason,
@@ -512,6 +651,7 @@ impl ApplicationHandle {
             ApplicationState::Unloaded | ApplicationState::Destroyed
         ) {
             self.inner.storage.close()?;
+            self.inner.file_system.close()?;
             state.page_stack = None;
         } else if next == ApplicationState::Launched {
             state.page_stack = Some(vec![self.inner.manifest.entry_page.clone()]);

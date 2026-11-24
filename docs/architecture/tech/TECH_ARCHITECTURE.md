@@ -11,7 +11,7 @@ The repository owns portable Rust runtime libraries, source project/package read
 
 ## Crate direction
 
-The initial crates are organized by responsibility. The execution engine owns runtime configuration, application contexts and lifecycle/storage primitives. The package loader owns project metadata, resource containment and bounded archive extraction. The WXML compiler owns source spans, parsing, diagnostics and a syntax tree. The V8 adapter owns one-shot isolated JavaScript evaluation with explicit source-size limits and a host-enforced execution deadline. The headless renderer maps parsed syntax trees into a stable structural Render Tree while preserving bindings and source spans. The CLI composes these public surfaces for inspection and local validation. The CLI may depend on the libraries, while lower-level compiler, package and renderer crates do not depend on the CLI or engine.
+The initial crates are organized by responsibility. The execution engine owns runtime configuration, application contexts, persistent per-app V8 contexts, page lifecycle, isolated storage and virtual files, and a bounded registered-route stack. The package loader owns project metadata, resource containment and bounded ZIP extraction. The WXML compiler owns source spans, structural directive metadata and parse diagnostics. The V8 adapter owns one-shot and persistent isolated JavaScript contexts with configurable source and heap limits and a host-enforced execution deadline. The headless renderer maps parsed syntax trees into a stable structural Render Tree, evaluates dotted page-data bindings and a bounded conditional/list subset, and applies a structural WXSS selector/cascade subset. The CLI composes these public surfaces for source-project inspection, script registration, basic lifecycle callbacks and local diagnostics. These subsets do not claim full WeChat compatibility.
 
 The PRD's long-term target adds independent compatibility, renderer, provider, inspector and ABI responsibilities as their contracts mature. No crate claims whole-product compatibility solely by exposing a similarly named API.
 
@@ -23,7 +23,7 @@ V8 is the initial engine target using the upstream Rust crate distribution. Isol
 
 ## Renderer and platform boundaries
 
-An engine-facing Render Tree and event contract separates mini-program semantics from Headless and WebView implementations. Native rendering and Web/browser adapters are later platform deliverables. Host APIs are accessed through permission-checked providers. Provider-dependent capabilities report required configuration or explicit unsupported states.
+An engine-facing Render Tree and event contract separates mini-program semantics from Headless and WebView implementations. Current data evaluation supports scalar JSON property paths, literals, `!`, equality, `wx:if` branch chains, and bounded `wx:for` arrays. WXSS matching supports type/class/ID selectors and descendant combinators with specificity/source-order cascade, while values remain unevaluated strings. Native rendering and Web/browser adapters are later platform deliverables. Host APIs are accessed through permission-checked providers. Provider-dependent capabilities report required configuration or explicit unsupported states.
 
 ## Inspector and SDK boundaries
 

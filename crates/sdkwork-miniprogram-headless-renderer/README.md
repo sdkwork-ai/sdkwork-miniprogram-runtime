@@ -9,7 +9,11 @@ assert_eq!(tree.node_count, 2);
 # Ok::<(), sdkwork_miniprogram_wxml_compiler::Diagnostic>(())
 ```
 
-This crate provides inspection and structural testing data. It does not implement expression evaluation, full WXSS semantics, layout, pixels, event dispatch, component state, accessibility mapping or screenshot capture.
+This crate provides inspection and structural testing data. Data rendering is limited to the subset described below. It does not implement full WXSS semantics, layout, pixels, event dispatch, component framework state, accessibility mapping or screenshot capture.
+
+## Data rendering
+
+`build_with_data` evaluates a bounded WXML subset against a JSON page-data object. It resolves simple dotted property paths, JSON literals, basic quoted strings, unary `!`, and equality comparisons without JavaScript type coercion. It evaluates `wx:if`/`wx:elif`/`wx:else`, expands `wx:for` arrays with the declared item and index names, and substitutes supported text and attribute bindings. Loop expansion has a hard ceiling of 1,000 items per directive and a caller-provided lower limit. Unsupported expressions remain as binding nodes or attributes and produce source-located diagnostics. The evaluator does not execute JavaScript, implement WXS, or evaluate arbitrary operators, methods, assignments, or function calls.
 
 ## WXSS subset
 

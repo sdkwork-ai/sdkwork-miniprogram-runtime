@@ -44,6 +44,7 @@ trace:
     - crates/sdkwork-miniprogram-package-loader
     - crates/sdkwork-miniprogram-v8-adapter
     - crates/sdkwork-miniprogram-wxml-compiler
+    - crates/sdkwork-miniprogram-headless-renderer
     - crates/sdkwork-miniprogram-runtime-cli
 verification:
   - cargo fmt --all --check
@@ -65,22 +66,23 @@ The PRD defines the target, while this matrix records actual evidence. `Planned`
 
 | Capability | Initial status | Evidence or next acceptance boundary |
 | --- | --- | --- |
-| Cargo workspace, formatting, typed errors, basic lifecycle | In Progress | Workspace build, unit tests, doctests and stable crate contracts |
-| Runtime configuration and instance isolation | In Progress | Invalid configurations rejected and per-app state separation tests |
-| Standard source project inspection and diagnostics | In Progress | Path containment, manifest/page validation and malformed fixture suite |
-| Secure ZIP project packages | In Progress | Bounded path-safe extraction, traversal rejection and entry/expansion limit tests |
-| JavaScript execution with V8 | In Progress | One-shot and persistent per-app isolated contexts, configurable source-size and heap limits, compile/runtime diagnostics and host-enforced execution deadlines are tested; CommonJS/ESM, wx APIs and platform distribution remain open |
+| Cargo workspace, formatting, typed errors, basic lifecycle | Tested | Workspace build, strict Clippy, unit tests, doctests, SDKWORK baseline, naming, manifest and component-port checks on Windows x86_64 MSVC |
+| Runtime configuration and instance isolation | Tested | Invalid configuration, app storage namespace and persistent V8 context separation tests |
+| Standard source project inspection and diagnostics | Tested | Example CLI acceptance test covers project loading, script registration, basic lifecycle callbacks, WXML structure and WXSS subset output |
+| Secure ZIP project packages | Tested | Bounded path-safe extraction, traversal rejection and entry/expansion limit tests on Windows x86_64 |
+| JavaScript execution with V8 | In Progress | One-shot and persistent per-app isolated contexts, configurable source-size and heap limits, source-attributed registration errors, compile/runtime diagnostics and host-enforced execution deadlines are tested; CommonJS/ESM, wx APIs and platform distribution remain open |
 | CommonJS, ESM, npm resolution and source maps | Planned | Versioned module compatibility contract and resolver/compiler tests |
-| WXML parser, AST and source spans | In Progress | Structural AST, nested elements, attributes, text, interpolation tokens, event binding names, source-located `wx:if`/`wx:elif`/`wx:else` and `wx:for` syntax diagnostics are tested; expression and branch evaluation remain planned |
-| WXML full expression, loops, conditionals, templates, imports, components, event model | Planned | Versioned grammar and semantic compatibility matrix |
-| WXSS structural subset | In Progress | Type/class/ID selectors, descendant matching, specificity/source-order cascade and diagnostics are tested; layout, rpx calculation, page scoping and media behavior remain planned |
+| WXML parser, AST and source spans | Tested | Structural AST, nested elements, attributes, text, interpolation tokens, event binding names, and source-located conditional/loop directives are tested |
+| WXML data-aware rendering subset | In Progress | Dotted property bindings, JSON/basic string literals, unary `!`, equality, conditional chains and bounded array loops are tested; JavaScript expressions, templates, imports, component/event semantics remain open |
+| WXSS structural subset | Tested | Type/class/ID selectors, descendant matching, specificity/source-order cascade and unsupported syntax diagnostics are tested; layout, rpx calculation, page scoping and media behavior remain open |
 | WXS isolation and module behavior | Planned | Dedicated syntax/boundary suite against target docs |
-| App/Page/Component lifecycle, observers, behaviors and relations | Planned | Ordered lifecycle traces and component behavior suites |
+| App/Page registration and basic lifecycle callbacks | In Progress | Isolated app/page script registration, basic `setData`, `onLaunch`, `onShow`, `onLoad` and page data snapshot are tested; ordered full lifecycle, observers, behaviors and component relations remain planned |
 | Base components and accessibility metadata | Planned | Component-by-component properties/events/platform evidence |
 | wx API registry and provider routing | Planned | API schemas, callback/Promise/error tests and provider declarations |
-| Storage, virtual file system, network and permissions | Planned | Namespace, path-containment, quota, redaction and host-policy tests |
+| Storage and virtual file system | Tested | Per-app in-memory namespaces, path containment, file-count/file-size/aggregate-byte quotas, and close-on-unload are tested; persistence and host integration remain open |
+| Network and permissions | Planned | Provider contracts, permission decisions, redirect policy, redaction and host-policy tests |
 | Page stack, routing and tab bar | In Progress | Registered-route `navigate_to`, `redirect_to`, `navigate_back`, lifecycle gating and configured depth are tested; tab operations, query parameters, lifecycle callbacks and visual synchronization remain planned |
-| WebView and Headless renderers | In Progress | Headless structural Render Tree preserves stable preorder ids, source spans and unevaluated bindings, and exposes a structural WXSS subset; WebView/pixel layout remain planned |
+| WebView and Headless renderers | In Progress | Headless renderer preserves source spans, evaluates the supported page-data subset and exposes structural WXSS matches; WebView, layout, geometry and pixels remain open |
 | Android, iOS, Windows, macOS, Linux and Web adapters | Planned | Toolchain, host integration, capability and release evidence per platform |
 | CDP gateway, V8 Inspector and custom domains | Planned | Protocol version and method coverage, target discovery and authorization tests |
 | SDKWORK DevTools | Planned | Separate React/TypeScript frontend and protocol-only integration tests |

@@ -2,13 +2,14 @@
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "allow"
+allow-wildcard-paths = true
+workspace-dependencies = { duplicates = "deny", include-path-dependencies = true, unused = "deny" }
 
 [licenses]
 version = 2
 allow = [
     "Apache-2.0",
-    "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "MIT",

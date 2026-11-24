@@ -42,6 +42,12 @@ pub struct ResourceBudget {
     pub max_storage_entries_per_application: usize,
     /// Maximum encoded size of one storage value in bytes.
     pub max_storage_value_bytes: usize,
+    /// Maximum number of files in one application's virtual filesystem.
+    pub max_files_per_application: usize,
+    /// Maximum byte length of one virtual file.
+    pub max_file_bytes: usize,
+    /// Maximum aggregate byte length of all virtual files for one application.
+    pub max_total_file_bytes: usize,
     /// Maximum UTF-8 source size accepted by one application JavaScript evaluation.
     pub max_javascript_source_bytes: usize,
     /// Maximum V8 heap size assigned to one application JavaScript context.
@@ -57,6 +63,9 @@ impl Default for ResourceBudget {
             max_pages_per_application: 128,
             max_storage_entries_per_application: 1024,
             max_storage_value_bytes: 1024 * 1024,
+            max_files_per_application: 10_000,
+            max_file_bytes: 64 * 1024 * 1024,
+            max_total_file_bytes: 512 * 1024 * 1024,
             max_javascript_source_bytes: 4 * 1024 * 1024,
             max_javascript_heap_bytes: 64 * 1024 * 1024,
             javascript_timeout_ms: 5_000,
@@ -128,6 +137,15 @@ impl RuntimeConfig {
             (
                 "max_storage_value_bytes",
                 self.resource_budget.max_storage_value_bytes,
+            ),
+            (
+                "max_files_per_application",
+                self.resource_budget.max_files_per_application,
+            ),
+            ("max_file_bytes", self.resource_budget.max_file_bytes),
+            (
+                "max_total_file_bytes",
+                self.resource_budget.max_total_file_bytes,
             ),
             (
                 "max_javascript_source_bytes",

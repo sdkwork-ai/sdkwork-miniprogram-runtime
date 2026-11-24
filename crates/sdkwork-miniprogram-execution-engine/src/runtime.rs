@@ -4,8 +4,8 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::{
-    ApplicationHandle, ApplicationManifest, ApplicationStorage, RendererKind, Result,
-    RuntimeConfig, RuntimeError,
+    ApplicationHandle, ApplicationManifest, ApplicationStorage, ApplicationVirtualFileSystem,
+    RendererKind, Result, RuntimeConfig, RuntimeError,
 };
 
 #[derive(Debug)]
@@ -118,9 +118,16 @@ impl Runtime {
                 .max_storage_entries_per_application,
             self.inner.config.resource_budget.max_storage_value_bytes,
         );
+        let file_system = ApplicationVirtualFileSystem::new(
+            manifest.app_id.clone(),
+            self.inner.config.resource_budget.max_files_per_application,
+            self.inner.config.resource_budget.max_file_bytes,
+            self.inner.config.resource_budget.max_total_file_bytes,
+        );
         let handle = ApplicationHandle::new(
             manifest,
             storage,
+            file_system,
             self.inner.config.resource_budget.max_pages_per_application,
             self.inner
                 .config

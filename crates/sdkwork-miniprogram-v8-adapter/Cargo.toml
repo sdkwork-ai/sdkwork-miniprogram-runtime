@@ -12,6 +12,7 @@ name = "sdkwork_miniprogram_v8_adapter"
 path = "src/lib.rs"
 
 [dependencies]
+serde_json.workspace = true
 tracing.workspace = true
 v8.workspace = true
 

@@ -6,6 +6,7 @@
 mod application;
 mod config;
 mod error;
+mod file_system;
 mod runtime;
 mod storage;
 
@@ -14,5 +15,6 @@ pub use application::{
 };
 pub use config::{EngineKind, LogLevel, RendererKind, ResourceBudget, RuntimeConfig};
 pub use error::{Result, RuntimeError};
+pub use file_system::{ApplicationVirtualFileSystem, VirtualDirectoryEntry, VirtualFileMetadata};
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use storage::ApplicationStorage;

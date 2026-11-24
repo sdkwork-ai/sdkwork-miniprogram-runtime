@@ -8,4 +8,4 @@ cargo run -p sdkwork-miniprogram-runtime-cli -- parse-wxml examples/hello-mini-p
 cargo run -p sdkwork-miniprogram-runtime-cli -- eval-js "1 + 2"
 ```
 
-`inspect` validates the `app.json` page tree, resolves source files within the project root, parses each page WXML and exercises the initial application lifecycle. It does not claim to render pages or execute `app.js`/page JavaScript as a persistent application.
+`inspect` validates the `app.json` page tree, resolves source files within the project root, registers app and page scripts in isolated persistent V8, invokes available `onLaunch`, `onShow` and `onLoad` callbacks, returns registration/data snapshots, parses page WXML and reports source-located WXSS subset diagnostics and computed declarations. Event dispatch, full data binding, layout, pixels, `wx` APIs and module loading are not provided.

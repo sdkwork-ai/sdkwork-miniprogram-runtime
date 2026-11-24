@@ -47,6 +47,29 @@ pub enum RuntimeError {
         /// Application identifier owning the released storage namespace.
         app_id: String,
     },
+    /// The application's virtual filesystem namespace has been released.
+    ApplicationFileSystemClosed {
+        /// Application identifier that owns the released filesystem namespace.
+        app_id: String,
+    },
+    /// A virtual filesystem path is absolute, non-normalized or contains an invalid component.
+    InvalidFileSystemPath {
+        /// Application identifier that owns the path namespace.
+        app_id: String,
+        /// Path supplied by the caller.
+        path: String,
+    },
+    /// A virtual filesystem resource ceiling would be exceeded.
+    FileSystemQuotaExceeded {
+        /// Application identifier that owns the filesystem namespace.
+        app_id: String,
+        /// Resource ceiling name.
+        quota: &'static str,
+        /// Configured limit.
+        limit: usize,
+        /// Requested or resulting amount.
+        attempted: usize,
+    },
     /// Page navigation could not be applied to the application's registered routes or page stack.
     NavigationFailed {
         /// Application identifier owning the rejected navigation.
@@ -108,6 +131,24 @@ impl fmt::Display for RuntimeError {
             Self::ApplicationStorageClosed { app_id } => {
                 write!(formatter, "storage for application `{app_id}` is closed")
             }
+            Self::ApplicationFileSystemClosed { app_id } => {
+                write!(formatter, "filesystem for application `{app_id}` is closed")
+            }
+            Self::InvalidFileSystemPath { app_id, path } => {
+                write!(
+                    formatter,
+                    "invalid virtual filesystem path `{path}` for `{app_id}`"
+                )
+            }
+            Self::FileSystemQuotaExceeded {
+                app_id,
+                quota,
+                limit,
+                attempted,
+            } => write!(
+                formatter,
+                "virtual filesystem quota `{quota}` exceeded for `{app_id}`: {attempted} > {limit}"
+            ),
             Self::NavigationFailed { app_id, reason } => {
                 write!(
                     formatter,

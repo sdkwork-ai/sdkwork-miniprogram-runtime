@@ -8,7 +8,7 @@
     "type": "rust-crate",
     "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-headless-renderer",
     "domain": "mini-program-runtime",
-    "capability": "source-mapped-structural-render-tree-with-wxss-subset",
+    "capability": "source-mapped-data-aware-render-tree-with-wxml-and-wxss-subsets",
     "languages": ["rust"],
     "generated": false,
     "manifests": ["Cargo.toml", "specs/component.spec.json"]
@@ -19,14 +19,15 @@
     { "file": "COMPONENT_SPEC.md", "path": "../../../sdkwork-specs/COMPONENT_SPEC.md", "purpose": "Component contract ownership." }
   ],
   "contracts": {
-    "layerRole": "renderer-adapter",
-    "publicExports": ["build", "build_with_styles", "RenderTree", "RenderNode", "RenderAttribute", "StyledRenderTree", "StyleDiagnostic", "StyleDiagnosticKind", "StyleSourceSpan"],
+    "layerRole": "runtime-composition",
+    "publicExports": ["build", "build_with_styles", "build_with_data", "RenderTree", "RenderNode", "RenderAttribute", "StyledRenderTree", "StyleDiagnostic", "StyleDiagnosticKind", "StyleSourceSpan", "DataRenderTree", "DataRenderDiagnostic", "DataRenderDiagnosticKind", "MAX_LOOP_ITERATIONS"],
     "providedPorts": [
       { "name": "headlessRenderTree", "export": "build" },
-      { "name": "styledHeadlessRenderTree", "export": "build_with_styles" }
+      { "name": "styledHeadlessRenderTree", "export": "build_with_styles" },
+      { "name": "dataAwareRenderTree", "export": "build_with_data" }
     ],
     "requiredPorts": [{ "name": "wxmlDocument", "export": "Document", "provider": "sdkwork-miniprogram-wxml-compiler" }],
-    "runtimeEntrypoints": ["build", "build_with_styles"],
+    "runtimeEntrypoints": ["build", "build_with_styles", "build_with_data"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],
@@ -37,6 +38,6 @@
   },
   "verification": {
     "commands": ["cargo test -p sdkwork-miniprogram-headless-renderer", "cargo clippy -p sdkwork-miniprogram-headless-renderer --all-targets -- -D warnings"],
-    "evidence": ["Type, class, ID and descendant selectors are tested", "Unsupported constructs include stylesheet source locations", "Style output contains matched declarations only and does not claim layout or pixel rendering"]
+    "evidence": ["Type, class, ID and descendant selectors are tested", "Unsupported constructs include stylesheet source locations", "Page-data property bindings, conditional branches and bounded array loops are tested", "Unsupported data expressions include template source locations", "Style output contains matched declarations only and does not claim layout or pixel rendering"]
   }
 }

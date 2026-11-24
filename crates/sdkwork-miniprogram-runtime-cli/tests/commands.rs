@@ -25,6 +25,16 @@ fn inspects_example_project_and_reports_partial_capabilities()
     let document: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(document["state"], "Visible");
     assert_eq!(document["pages"][0]["route"], "pages/index/index");
+    assert_eq!(document["javascriptRegistrations"]["appSource"], "app.js");
+    assert_eq!(
+        document["javascriptRegistrations"]["pages"][0]["data"]["title"],
+        "Hello, Mini Program Runtime"
+    );
+    assert_eq!(document["pages"][0]["lifecycle"]["onLoadResult"], "true");
+    assert_eq!(
+        document["javascriptRegistrations"]["pages"][0]["data"]["loaded"],
+        true
+    );
     assert_eq!(document["capabilities"]["wxmlStructuralParsing"], "partial");
     assert_eq!(document["capabilities"]["wxssStructuralSubset"], "partial");
     assert_eq!(
@@ -41,6 +51,19 @@ fn inspects_example_project_and_reports_partial_capabilities()
         document["pages"][0]["computedStyles"]["0"]["padding"],
         "24rpx"
     );
+    assert_eq!(
+        document["pages"][0]["dataRenderDiagnostics"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        document["pages"][0]["dataRenderTree"]["children"][0]["children"][1]["children"][0]["value"],
+        "Hello, Mini Program Runtime"
+    );
+    assert_eq!(
+        document["pages"][0]["dataRenderTree"]["children"][0]["children"][3]["children"][0]["value"],
+        "Ready"
+    );
+    assert_eq!(document["pages"][0]["pageData"]["loaded"], true);
     Ok(())
 }
 
