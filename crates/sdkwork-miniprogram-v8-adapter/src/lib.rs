@@ -3,7 +3,7 @@
 //! [`evaluate`] creates an isolated context for one-shot evaluation. [`JavaScriptContext`]
 //! owns a persistent context for one application and serializes evaluation on its V8 thread.
 
-use std::sync::{OnceLock, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 
 /// Maximum JavaScript source size accepted by one execution request.
@@ -140,6 +140,61 @@ enum ContextCommand {
         source: String,
         result: mpsc::SyncSender<Result<String>>,
     },
+    DispatchInspectorMessage {
+        message: String,
+        result: mpsc::SyncSender<Result<Vec<String>>>,
+    },
+}
+
+const INSPECTOR_CONTEXT_GROUP_ID: i32 = 1;
+
+#[derive(Debug)]
+struct InspectorOutput {
+    messages: Mutex<Vec<String>>,
+}
+
+impl InspectorOutput {
+    fn push(&self, message: String) {
+        self.messages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(message);
+    }
+
+    fn take(&self) -> Vec<String> {
+        std::mem::take(
+            &mut *self
+                .messages
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+}
+
+struct InspectorChannel(Arc<InspectorOutput>);
+
+struct InspectorClient;
+
+impl v8::inspector::V8InspectorClientImpl for InspectorClient {}
+
+impl v8::inspector::ChannelImpl for InspectorChannel {
+    fn send_response(
+        &self,
+        _call_id: i32,
+        mut message: v8::UniquePtr<v8::inspector::StringBuffer>,
+    ) {
+        if let Some(message) = message.as_mut() {
+            self.0.push(message.string().to_string());
+        }
+    }
+
+    fn send_notification(&self, mut message: v8::UniquePtr<v8::inspector::StringBuffer>) {
+        if let Some(message) = message.as_mut() {
+            self.0.push(message.string().to_string());
+        }
+    }
+
+    fn flush_protocol_notifications(&self) {}
 }
 
 /// A persistent, isolated JavaScript context intended to be owned by one application.
@@ -235,6 +290,48 @@ impl JavaScriptContext {
             });
         }
         self.evaluate_unchecked(source)
+    }
+
+    /// Dispatch one Chrome `DevTools` Protocol message to this context's V8 inspector session.
+    ///
+    /// The returned strings are protocol responses and notifications generated while the
+    /// message is handled. The inspector session and isolate remain on their dedicated V8
+    /// worker thread. This method does not provide a WebSocket transport or a paused-debugger
+    /// message loop.
+    ///
+    /// # Errors
+    /// Returns an error when the message exceeds the configured limit or the V8 worker stops.
+    pub fn dispatch_inspector_message(&mut self, message: &str) -> Result<Vec<String>> {
+        if message.len() > self.max_source_bytes {
+            return Err(V8Error::SourceTooLarge {
+                size: message.len(),
+                maximum: self.max_source_bytes,
+            });
+        }
+        if self.terminated {
+            return Err(V8Error::WorkerStopped);
+        }
+        let (result_sender, result_receiver) = mpsc::sync_channel(1);
+        self.commands
+            .send(ContextCommand::DispatchInspectorMessage {
+                message: message.to_owned(),
+                result: result_sender,
+            })
+            .map_err(|_| V8Error::WorkerStopped)?;
+        match result_receiver.recv_timeout(self.timeout) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.terminated = true;
+                let timeout_ms = u64::try_from(self.timeout.as_millis()).unwrap_or(u64::MAX);
+                tracing::warn!(timeout_ms, "V8 inspector dispatch deadline expired");
+                let _ = self.isolate.terminate_execution();
+                Err(V8Error::ExecutionTimeout { timeout_ms })
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.terminated = true;
+                Err(V8Error::WorkerStopped)
+            }
+        }
     }
 
     fn evaluate_unchecked(&mut self, source: &str) -> Result<String> {
@@ -374,11 +471,31 @@ fn context_worker(
 ) {
     let create_params = v8::CreateParams::default().heap_limits(0, max_heap_bytes);
     let isolate = &mut v8::Isolate::new(create_params);
+    let inspector_client = v8::inspector::V8InspectorClient::new(Box::new(InspectorClient));
+    let inspector = v8::inspector::V8Inspector::create(isolate, inspector_client);
     let context = create_context(isolate);
     if let Err(error) = evaluate_in_context(isolate, &context, MINI_PROGRAM_BOOTSTRAP) {
         let _ = handle_sender.send(Err(error));
         return;
     }
+
+    let output = Arc::new(InspectorOutput {
+        messages: Mutex::new(Vec::new()),
+    });
+    let session = {
+        v8::scope!(let handle_scope, isolate);
+        let context = v8::Local::new(handle_scope, &context);
+        v8::scope_with_context!(let context_scope, handle_scope, context);
+        let label = v8::inspector::StringView::from(&b"mini-program"[..]);
+        let aux_data = v8::inspector::StringView::from(&b"{}"[..]);
+        inspector.context_created(context, INSPECTOR_CONTEXT_GROUP_ID, label, aux_data);
+        inspector.connect(
+            INSPECTOR_CONTEXT_GROUP_ID,
+            v8::inspector::Channel::new(Box::new(InspectorChannel(Arc::clone(&output)))),
+            aux_data,
+            v8::inspector::V8InspectorClientTrustLevel::Untrusted,
+        )
+    };
     if handle_sender
         .send(Ok(isolate.thread_safe_handle()))
         .is_err()
@@ -386,17 +503,36 @@ fn context_worker(
         return;
     }
 
-    while let Ok(ContextCommand::Evaluate { source, result }) = commands.recv() {
-        let evaluation = evaluate_in_context(isolate, &context, &source);
-        let terminated = isolate.is_execution_terminating();
-        if terminated {
-            isolate.cancel_terminate_execution();
-        }
-        let _ = result.send(evaluation);
-        if terminated {
-            break;
+    while let Ok(command) = commands.recv() {
+        match command {
+            ContextCommand::Evaluate { source, result } => {
+                let evaluation = evaluate_in_context(isolate, &context, &source);
+                let terminated = isolate.is_execution_terminating();
+                if terminated {
+                    isolate.cancel_terminate_execution();
+                }
+                let _ = result.send(evaluation);
+                if terminated {
+                    break;
+                }
+            }
+            ContextCommand::DispatchInspectorMessage { message, result } => {
+                {
+                    v8::scope!(let handle_scope, isolate);
+                    let context = v8::Local::new(handle_scope, &context);
+                    v8::scope_with_context!(let context_scope, handle_scope, context);
+                    session.dispatch_protocol_message(v8::inspector::StringView::from(
+                        message.as_bytes(),
+                    ));
+                }
+                let _ = result.send(Ok(output.take()));
+            }
         }
     }
+
+    v8::scope!(let handle_scope, isolate);
+    let context = v8::Local::new(handle_scope, &context);
+    inspector.context_destroyed(context);
 }
 
 fn create_context(isolate: &mut v8::OwnedIsolate) -> v8::Global<v8::Context> {
@@ -649,6 +785,45 @@ mod tests {
         assert_eq!(first.evaluate("globalThis.count = 1")?, "1");
         assert_eq!(first.evaluate("globalThis.count += 1")?, "2");
         assert_eq!(second.evaluate("typeof globalThis.count")?, "undefined");
+        Ok(())
+    }
+
+    #[test]
+    fn dispatches_chrome_devtools_protocol_messages_on_the_v8_worker()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut context = super::JavaScriptContext::new()?;
+
+        let enabled =
+            context.dispatch_inspector_message(r#"{"id":1,"method":"Runtime.enable"}"#)?;
+        assert!(
+            enabled.iter().any(|message| {
+                message.contains(r#""id":1"#) && message.contains(r#""result""#)
+            })
+        );
+
+        let evaluated = context.dispatch_inspector_message(
+            r#"{"id":2,"method":"Runtime.evaluate","params":{"expression":"6 * 7","returnByValue":true,"contextId":1}}"#,
+        )?;
+        assert!(
+            evaluated.iter().any(|message| {
+                message.contains(r#""id":2"#) && message.contains(r#""value":42"#)
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_oversized_inspector_messages() -> Result<(), Box<dyn std::error::Error>> {
+        let mut context =
+            super::JavaScriptContext::with_options(8, DEFAULT_MAX_HEAP_BYTES, DEFAULT_TIMEOUT)?;
+
+        assert!(matches!(
+            context.dispatch_inspector_message("123456789"),
+            Err(V8Error::SourceTooLarge {
+                size: 9,
+                maximum: 8
+            })
+        ));
         Ok(())
     }
 

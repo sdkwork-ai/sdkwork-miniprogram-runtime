@@ -8,7 +8,7 @@
     "type": "rust-crate",
     "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-runtime-cli",
     "domain": "mini-program-runtime",
-    "capability": "project-inspection-and-runtime-diagnostics",
+    "capability": "project-inspection-diagnostics-and-local-preview-workbench",
     "languages": ["rust"],
     "generated": false,
     "manifests": ["Cargo.toml", "specs/component.spec.json"]
@@ -16,7 +16,8 @@
   "canonicalSpecs": [
     { "file": "RUST_CODE_SPEC.md", "path": "../../../sdkwork-specs/RUST_CODE_SPEC.md", "purpose": "Rust CLI and dependency boundaries." },
     { "file": "TEST_SPEC.md", "path": "../../../sdkwork-specs/TEST_SPEC.md", "purpose": "CLI behavior and project inspection tests." },
-    { "file": "SECURITY_SPEC.md", "path": "../../../sdkwork-specs/SECURITY_SPEC.md", "purpose": "No fabricated host capability behavior." }
+    { "file": "SECURITY_SPEC.md", "path": "../../../sdkwork-specs/SECURITY_SPEC.md", "purpose": "Loopback-only preview and project-contained source editing." },
+    { "file": "DOCUMENTATION_SPEC.md", "path": "../../../sdkwork-specs/DOCUMENTATION_SPEC.md", "purpose": "Repository product and working documentation." }
   ],
   "contracts": {
     "layerRole": "tooling",
@@ -29,7 +30,7 @@
       { "name": "headlessStructure", "export": "sdkwork-miniprogram-headless-renderer", "provider": "sdkwork-miniprogram-headless-renderer" },
       { "name": "javascriptEvaluation", "export": "sdkwork-miniprogram-v8-adapter", "provider": "sdkwork-miniprogram-v8-adapter" }
     ],
-    "runtimeEntrypoints": ["inspect", "parse-wxml", "eval-js", "version"],
+    "runtimeEntrypoints": ["inspect", "run", "parse-wxml", "eval-js", "version"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],
@@ -38,7 +39,7 @@
     "events": [],
     "configKeys": []
   },
-  "verification": {
-    "commands": ["cargo run -p sdkwork-miniprogram-runtime-cli -- --help", "cargo run -p sdkwork-miniprogram-runtime-cli -- inspect examples/hello-mini-program", "cargo run -p sdkwork-miniprogram-runtime-cli -- eval-js 1 + 2"]
+    "verification": {
+    "commands": ["cargo run -p sdkwork-miniprogram-runtime-cli -- --help", "cargo run -p sdkwork-miniprogram-runtime-cli -- inspect examples/hello-mini-program", "cargo run -p sdkwork-miniprogram-runtime-cli -- run examples/hello-mini-program", "cargo run -p sdkwork-miniprogram-runtime-cli -- eval-js 1 + 2"]
   }
 }

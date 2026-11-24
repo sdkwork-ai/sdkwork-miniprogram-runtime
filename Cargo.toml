@@ -35,6 +35,7 @@ sdkwork-miniprogram-wxml-compiler = { path = "crates/sdkwork-miniprogram-wxml-co
 thiserror = "2.0.17"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+tiny_http = "0.12.0"
 v8 = "152.2.0"
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 

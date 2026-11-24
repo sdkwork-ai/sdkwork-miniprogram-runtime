@@ -22,6 +22,7 @@ acceptance_criteria:
   - Applications in one runtime have independent identifiers and private state namespaces.
   - WXML compiler diagnostics carry source locations for every supported construct and malformed construct.
   - The CLI can inspect a standard source project and report unsupported runtime capabilities explicitly.
+  - On Windows, `sdkwork-miniprogram-runtime-cli run <project-dir>` opens the loopback editor workbench with a phone-first preview, selectable tablet and PC viewports, a project Explorer, Monaco source editor, project switching, and a read-only render Inspector with node source locations. The device viewport has no visible scrollbar at the default page size. Saving a supported page source refreshes the preview. The editor server binds to loopback, requires same-origin access, restricts writes to existing project files, and the browser does not execute project JavaScript.
   - Every product capability appears in the capability matrix with an honest delivery state and verification reference.
   - Baseline, naming, manifest, formatting, workspace tests and available security checks are recorded before completion.
 non_functional_requirements:
@@ -69,6 +70,7 @@ The PRD defines the target, while this matrix records actual evidence. `Planned`
 | Cargo workspace, formatting, typed errors, basic lifecycle | Tested | Workspace build, strict Clippy, unit tests, doctests, SDKWORK baseline, naming, manifest and component-port checks on Windows x86_64 MSVC |
 | Runtime configuration and instance isolation | Tested | Invalid configuration, app storage namespace and persistent V8 context separation tests |
 | Standard source project inspection and diagnostics | Tested | Example CLI acceptance test covers project loading, script registration, basic lifecycle callbacks, WXML structure and WXSS subset output |
+| Windows run and preview workbench | Tested | CLI integration test starts the `--no-launch` loopback server, verifies editor shell, device controls, read-only Inspector payload and source spans, project discovery/switching, reads and saves page JavaScript, verifies the next preview reflects edited data, and rejects traversal and cross-origin requests. Windows app-window startup and rendered page HTTP response are checked manually. |
 | Secure ZIP project packages | Tested | Bounded path-safe extraction, traversal rejection and entry/expansion limit tests on Windows x86_64 |
 | JavaScript execution with V8 | In Progress | One-shot and persistent per-app isolated contexts, configurable source-size and heap limits, source-attributed registration errors, compile/runtime diagnostics and host-enforced execution deadlines are tested; CommonJS/ESM, wx APIs and platform distribution remain open |
 | CommonJS, ESM, npm resolution and source maps | Planned | Versioned module compatibility contract and resolver/compiler tests |
@@ -82,9 +84,9 @@ The PRD defines the target, while this matrix records actual evidence. `Planned`
 | Storage and virtual file system | Tested | Per-app in-memory namespaces, path containment, file-count/file-size/aggregate-byte quotas, and close-on-unload are tested; persistence and host integration remain open |
 | Network and permissions | Planned | Provider contracts, permission decisions, redirect policy, redaction and host-policy tests |
 | Page stack, routing and tab bar | In Progress | Registered-route `navigate_to`, `redirect_to`, `navigate_back`, lifecycle gating and configured depth are tested; tab operations, query parameters, lifecycle callbacks and visual synchronization remain planned |
-| WebView and Headless renderers | In Progress | Headless renderer preserves source spans, evaluates the supported page-data subset and exposes structural WXSS matches; WebView, layout, geometry and pixels remain open |
+| WebView and Headless renderers | In Progress | Headless renderer preserves source spans and evaluates the supported page-data subset with structural WXSS matches. The Windows workbench presents that subset in a device-sized viewport. Interactive WebView lifecycle updates, layout, geometry and pixels remain open |
 | Android, iOS, Windows, macOS, Linux and Web adapters | Planned | Toolchain, host integration, capability and release evidence per platform |
-| CDP gateway, V8 Inspector and custom domains | Planned | Protocol version and method coverage, target discovery and authorization tests |
+| CDP gateway, V8 Inspector and custom domains | Partial | The V8 adapter exposes a worker-owned Inspector protocol session bridge with Runtime protocol tests. A WebSocket target, target discovery, pause loop, source mapping, authorization and custom domains remain required. |
 | SDKWORK DevTools | Planned | Separate React/TypeScript frontend and protocol-only integration tests |
 | Rust SDK and C ABI | Planned | ABI ownership, versions, thread/callback and lifecycle conformance tests |
 | WASM plugins and trusted native providers | Planned | Permission, signature, API version, quota and isolation tests |

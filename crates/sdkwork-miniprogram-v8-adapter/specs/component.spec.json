@@ -8,7 +8,7 @@
     "type": "rust-crate",
     "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-v8-adapter",
     "domain": "mini-program-runtime",
-    "capability": "isolated-one-shot-and-persistent-javascript-evaluation",
+    "capability": "isolated-javascript-evaluation-and-v8-inspector-protocol-session",
     "languages": ["rust"],
     "generated": false,
     "manifests": ["Cargo.toml", "specs/component.spec.json"]
@@ -21,10 +21,10 @@
   ],
   "contracts": {
     "layerRole": "runtime-composition",
-    "publicExports": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext", "V8Error", "Result", "DEFAULT_MAX_SOURCE_BYTES", "DEFAULT_MAX_HEAP_BYTES", "DEFAULT_TIMEOUT"],
-    "providedPorts": [{ "name": "javascriptEvaluation", "export": "evaluate" }, { "name": "persistentJavascriptContext", "export": "JavaScriptContext" }],
+    "publicExports": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext", "JavaScriptContext::dispatch_inspector_message", "V8Error", "Result", "DEFAULT_MAX_SOURCE_BYTES", "DEFAULT_MAX_HEAP_BYTES", "DEFAULT_TIMEOUT"],
+    "providedPorts": [{ "name": "javascriptEvaluation", "export": "evaluate" }, { "name": "persistentJavascriptContext", "export": "JavaScriptContext" }, { "name": "v8InspectorProtocolSession", "export": "JavaScriptContext::dispatch_inspector_message" }],
     "requiredPorts": [],
-    "runtimeEntrypoints": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext::new", "JavaScriptContext::evaluate", "JavaScriptContext::register_source", "JavaScriptContext::registration_snapshot"],
+    "runtimeEntrypoints": ["evaluate", "evaluate_with_limit", "evaluate_with_options", "JavaScriptContext::new", "JavaScriptContext::evaluate", "JavaScriptContext::register_source", "JavaScriptContext::registration_snapshot", "JavaScriptContext::dispatch_inspector_message"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],

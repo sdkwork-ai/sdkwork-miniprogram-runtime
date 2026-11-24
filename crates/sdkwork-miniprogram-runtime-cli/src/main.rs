@@ -7,6 +7,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing_subscriber::EnvFilter;
 
+mod viewer;
+mod workbench;
+mod workbench_host;
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -27,6 +31,26 @@ fn run() -> Result<(), Box<dyn Error>> {
         "inspect" => {
             let path = required_path(arguments.next(), "project directory")?;
             inspect_project(&path)
+        }
+        "run" => {
+            let mut project_path = None;
+            let mut launch_window = true;
+            for argument in arguments {
+                if argument == "--no-launch" {
+                    launch_window = false;
+                } else if project_path.replace(PathBuf::from(argument)).is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "run accepts one project directory",
+                    )
+                    .into());
+                }
+            }
+            let path = required_path(
+                project_path.map(|path| path.display().to_string()),
+                "project directory",
+            )?;
+            run_project(&path, launch_window)
         }
         "parse-wxml" => {
             let path = required_path(arguments.next(), "WXML file")?;
@@ -54,6 +78,10 @@ fn print_help() -> Result<(), Box<dyn Error>> {
     writeln!(
         stdout,
         "  inspect <project-dir>  Validate project files and parse page WXML"
+    )?;
+    writeln!(
+        stdout,
+        "  run <project-dir> [--no-launch]  Start the editor and device preview workbench"
     )?;
     writeln!(
         stdout,
@@ -158,6 +186,25 @@ fn inspect_project(root: &std::path::Path) -> Result<(), Box<dyn Error>> {
     application.hide()?;
     runtime.unload_application(application.app_id())?;
     Ok(())
+}
+
+fn run_project(root: &std::path::Path, launch_window: bool) -> Result<(), Box<dyn Error>> {
+    use sdkwork_miniprogram_package_loader::load_project;
+
+    let project = match load_project(root) {
+        Ok(project) => project,
+        Err(sdkwork_miniprogram_package_loader::LoaderError::InvalidProject { diagnostics }) => {
+            let details = serde_json::to_string_pretty(&diagnostics).map_err(io::Error::other)?;
+            return Err(io::Error::new(io::ErrorKind::InvalidData, details).into());
+        }
+        Err(error) => return Err(io::Error::other(format!("{error:?}")).into()),
+    };
+    let title = project
+        .root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Mini Program");
+    workbench_host::serve(&project.root, title, launch_window)
 }
 
 fn register_project_scripts(
