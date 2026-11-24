@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/sdkwork-miniprogram-execution-engine",
+    "crates/sdkwork-miniprogram-headless-renderer",
     "crates/sdkwork-miniprogram-package-loader",
     "crates/sdkwork-miniprogram-v8-adapter",
     "crates/sdkwork-miniprogram-wxml-compiler",
@@ -9,6 +10,7 @@ members = [
 ]
 default-members = [
     "crates/sdkwork-miniprogram-execution-engine",
+    "crates/sdkwork-miniprogram-headless-renderer",
     "crates/sdkwork-miniprogram-package-loader",
     "crates/sdkwork-miniprogram-v8-adapter",
     "crates/sdkwork-miniprogram-wxml-compiler",
@@ -25,8 +27,14 @@ repository = "https://github.com/sdkwork-ai/sdkwork-miniprogram-runtime"
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+sdkwork-miniprogram-headless-renderer = { path = "crates/sdkwork-miniprogram-headless-renderer" }
+sdkwork-miniprogram-execution-engine = { path = "crates/sdkwork-miniprogram-execution-engine" }
+sdkwork-miniprogram-package-loader = { path = "crates/sdkwork-miniprogram-package-loader" }
+sdkwork-miniprogram-v8-adapter = { path = "crates/sdkwork-miniprogram-v8-adapter" }
+sdkwork-miniprogram-wxml-compiler = { path = "crates/sdkwork-miniprogram-wxml-compiler" }
 thiserror = "2.0.17"
 tracing = "0.1.41"
+tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 v8 = "152.2.0"
 zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
@@ -36,7 +44,7 @@ unsafe_code = "forbid"
 unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
-rust_2024_compatibility = "warn"
+rust_2024_compatibility = { level = "warn", priority = -1 }
 single_use_lifetimes = "warn"
 trivial_casts = "warn"
 trivial_numeric_casts = "warn"
@@ -44,8 +52,8 @@ unused_qualifications = "warn"
 variant_size_differences = "warn"
 
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"

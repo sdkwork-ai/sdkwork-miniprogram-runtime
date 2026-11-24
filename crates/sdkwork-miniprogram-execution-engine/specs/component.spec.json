@@ -14,10 +14,10 @@
     "manifests": ["Cargo.toml", "specs/component.spec.json"]
   },
   "canonicalSpecs": [
-    { "file": "RUST_CODE_SPEC.md", "path": "../../../../sdkwork-specs/RUST_CODE_SPEC.md", "purpose": "Rust crate boundaries and implementation quality." },
-    { "file": "DEPENDENCY_MANAGEMENT_SPEC.md", "path": "../../../../sdkwork-specs/DEPENDENCY_MANAGEMENT_SPEC.md", "purpose": "Cargo workspace and dependency authority." },
-    { "file": "SECURITY_SPEC.md", "path": "../../../../sdkwork-specs/SECURITY_SPEC.md", "purpose": "Runtime isolation and secure defaults." },
-    { "file": "TEST_SPEC.md", "path": "../../../../sdkwork-specs/TEST_SPEC.md", "purpose": "Runtime lifecycle and isolation verification." }
+    { "file": "RUST_CODE_SPEC.md", "path": "../../../sdkwork-specs/RUST_CODE_SPEC.md", "purpose": "Rust crate boundaries and implementation quality." },
+    { "file": "DEPENDENCY_MANAGEMENT_SPEC.md", "path": "../../../sdkwork-specs/DEPENDENCY_MANAGEMENT_SPEC.md", "purpose": "Cargo workspace and dependency authority." },
+    { "file": "SECURITY_SPEC.md", "path": "../../../sdkwork-specs/SECURITY_SPEC.md", "purpose": "Runtime isolation and secure defaults." },
+    { "file": "TEST_SPEC.md", "path": "../../../sdkwork-specs/TEST_SPEC.md", "purpose": "Runtime lifecycle and isolation verification." }
   ],
   "contracts": {
     "layerRole": "runtime-core",
@@ -38,6 +38,6 @@
     "configKeys": []
   },
   "verification": {
-    "commands": ["cargo test -p sdkwork-runtime-core", "cargo clippy -p sdkwork-runtime-core --all-targets -- -D warnings"]
+    "commands": ["cargo test -p sdkwork-miniprogram-execution-engine", "cargo clippy -p sdkwork-miniprogram-execution-engine --all-targets -- -D warnings"]
   }
 }

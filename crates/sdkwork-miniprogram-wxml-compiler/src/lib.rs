@@ -1,4 +1,4 @@
-//! Parsing primitives for WeChat Mini Program WXML templates.
+//! Parsing primitives for `WeChat` Mini Program WXML templates.
 //!
 //! This crate currently parses document structure, attributes, text, and
 //! balanced `{{ ... }}` interpolations. It does not evaluate expressions or

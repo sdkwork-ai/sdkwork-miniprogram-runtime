@@ -1,43 +1,1063 @@
-# SDKWORK Mini Program Runtime PRD
+# sdkwork-miniprogram-runtime
 
-Status: active product baseline
-Version: 1.0.0
-Source: `sdkwork-miniprogram-runtime-PRD.md` supplied by the product owner
-Specs: `../sdkwork-specs/REQUIREMENTS_SPEC.md`, `../sdkwork-specs/TEST_SPEC.md`
+## 完整产品需求文档（PRD）
 
-## Product definition
+  文档属性       内容
+  -------------- --------------------------------------------
+  项目名称       sdkwork-miniprogram-runtime
+  文档类型       产品需求文档（PRD）
+  文档版本       1.0.0
+  文档状态       产品基线 / 待技术评审
+  核心技术方向   Rust Native Runtime
+  目标兼容规范   微信小程序公开开发规范，Full Compatibility
+  调试形态       CDP + 独立 DevTools（Both）
+  目标平台       Android、iOS、Windows、macOS、Linux、Web
+  首期渲染策略   WebView Renderer + Headless Renderer
+  长期渲染策略   增加 Rust Native Renderer
 
-An embeddable, cross-platform mini-program runtime implemented primarily in Rust. It loads and executes supported mini-program projects, provides compatible rendering and host APIs, isolates applications, and exposes inspection and debugging through CDP and SDKWORK DevTools.
+------------------------------------------------------------------------
 
-## Goals
+# 1. 文档目的
 
-- Provide an independently embeddable Rust runtime core and Rust/C ABI SDK surfaces.
-- Load standard source projects and a documented runtime package format.
-- Implement public mini-program language, lifecycle, component, routing and API behavior against a versioned compatibility profile.
-- Support WebView and Headless renderers first, with future Native and Web renderers.
-- Provide authenticated debugging, inspection, network and performance tooling.
-- Maintain compatibility evidence by capability, platform and target specification version.
+本文档定义 `sdkwork-miniprogram-runtime`
+的产品定位、目标用户、使用场景、功能范围、兼容性要求、调试能力、平台要求、非功能要求、验收标准和版本规划，作为产品、架构、研发、测试和交付团队的共同依据。
 
-## Non-goals
+本文档描述的是产品应具备什么能力及如何验收，不替代独立的技术架构设计、接口协议规范、Rust
+Crate 设计和详细研发任务拆分。
 
-- Claiming official WeChat certification or access to private services or APIs.
-- Bypassing host permissions, protected service requirements or proprietary package protections.
-- Claiming full compatibility without a complete tested compatibility matrix.
-- Delivering a native renderer or complete production platform binding before its platform contracts are established.
+## 1.1 产品摘要
 
-## Acceptance baseline
+`sdkwork-miniprogram-runtime` 是一套以 Rust
+为核心实现的跨平台小程序运行时。它负责加载、解析、执行和渲染小程序应用，并提供与运行时深度集成的
+Inspect、Debug、Network、Performance 和 Memory 等开发者能力。
 
-Each release declares runtime and package format versions, the compatibility profile, supported platforms, renderer support and tested capabilities. Source loading reports path-specific diagnostics. Application contexts isolate their execution, storage, files, permissions and debug access. API capabilities without a real provider report `Unsupported` or `Requires Provider`. CDP targets require explicit authorization and default to localhost in debug builds. Every verified behavior is backed by a reproducible test suite and environment record.
+项目以微信小程序公开开发规范和可验证行为作为主要兼容目标，使符合目标兼容范围的小程序工程能够在
+SDKWORK Runtime 中运行，并通过统一的 Runtime SDK 嵌入不同宿主应用。
 
-## Product scope and delivery status
+本产品不是简单的 WebView
+容器，也不是仅把小程序页面转换成普通网页的工具。它需要具备应用包管理、JavaScript
+执行、基础库兼容、页面和组件生命周期、API
+代理、权限控制、视图更新、平台适配以及调试协议等完整运行时能力。
 
-The complete requested product scope is maintained in [the capability matrix](../requirements/REQ-2026-0001-runtime-foundation.md#capability-delivery-matrix). Initial engineering starts with Cargo workspace and runtime foundations. The PRD's M1-M5 language, compatibility, renderer, inspection, platform, C ABI, security and DevTools work remains unverified until corresponding implementation and evidence exist.
+## 1.2 产品愿景
 
-## Open product and architecture inputs
+建立一个独立、开放、可嵌入、可扩展的小程序执行基础设施：
 
-- Supported public compatibility documentation and target baseline-library versions.
-- V8 distribution, build, licensing and validation per platform, including iOS constraints.
-- Stable source/package manifest, package size limits and optional signature policy.
-- CDP version and supported method matrix.
-- Provider contracts, host permissions and production process-isolation requirements.
-- Criteria for promotion of a platform or capability from implemented to tested and verified.
+-   一份符合兼容规范的小程序工程，可以在多个宿主平台运行。
+-   一套 Runtime Core，可以被不同应用和开发工具集成。
+-   一套调试协议，可以连接 Chrome DevTools 兼容客户端和 SDKWORK 自有
+    DevTools。
+-   一套可持续演进的兼容性测试体系，持续度量与目标微信规范的行为差异。
+-   一套标准化 API 和插件体系，支持宿主能力扩展及企业级定制。
+
+------------------------------------------------------------------------
+
+# 2. 产品目标与成功指标
+
+## 2.1 核心目标
+
+1.  建立独立的 Rust 小程序 Runtime Core。
+2.  支持微信小程序工程的加载、解析、编译和运行。
+3.  覆盖目标微信规范中的语言、组件、API、生命周期、路由和工程能力。
+4.  提供 CDP 调试接入和独立 Mini Program DevTools。
+5.  支持多应用实例和安全隔离。
+6.  提供 Rust API 与稳定的跨语言 C ABI。
+7.  形成 Android、iOS、Windows、macOS、Linux 和 Web 平台适配能力。
+8.  建立可自动运行、可复现、可追踪的兼容性验收体系。
+
+## 2.2 成功指标
+
+项目不得仅以"能打开页面"或"Demo
+可运行"作为成功标准。至少需要持续跟踪以下指标：
+
+  ----------------------------------------------------------------------------------------------
+  指标                    定义                                           验收方式
+  ----------------------- ---------------------------------------------- -----------------------
+  工程加载成功率          测试工程可被正确识别、解析和加载的比例         自动化兼容测试
+
+  语法兼容率              目标语法测试用例通过比例                       Parser/Compiler 测试
+
+  API 行为通过率          API 参数、回调、Promise、错误语义通过比例      API Contract 测试
+
+  组件行为通过率          组件属性、事件、生命周期及布局行为通过比例     组件测试
+
+  生命周期一致性          生命周期触发顺序和次数符合预期的比例           Trace 对比
+
+  平台一致性              各平台相同测试用例行为一致的比例               跨平台 E2E
+
+  调试覆盖率              已支持的调试能力及协议方法比例                 Protocol 测试
+
+  稳定性                  长时间运行、反复切换页面和异常恢复表现         稳定性测试
+
+  安全性                  权限边界、文件、网络、调试和插件隔离测试结果   安全测试
+
+  性能                    启动、页面更新、内存和消息延迟                 Benchmark
+  ----------------------------------------------------------------------------------------------
+
+所有指标必须绑定明确的测试集版本、目标基础库版本、平台、设备配置和统计口径。具体数值目标由技术评审和基准测试后确定，不得在缺少测试环境时虚构性能承诺。
+
+## 2.3 非目标
+
+以下事项不属于 Runtime 本身可以单方面保证的能力：
+
+-   不承诺获得微信官方认证或微信官方授权。
+-   不承诺实现微信服务端、账号体系或微信内部未公开能力。
+-   不承诺绕过微信平台权限、支付、登录、广告或内容安全机制。
+-   不把微信开发者工具内部未公开协议作为核心运行依赖。
+-   不以逆向破解未公开专有包格式作为首期交付前提。
+-   不要求首期完成高保真 Native Renderer。
+-   不要求 Runtime 自带完整的小程序云开发后端。
+-   不将 DevTools 前端限定为某一个 Chrome DevTools 版本。
+
+------------------------------------------------------------------------
+
+# 3. 用户角色与使用场景
+
+## 3.1 用户角色
+
+  -------------------------------------------------------------------------------------------
+  用户角色                目标                           主要关注点
+  ----------------------- ------------------------------ ------------------------------------
+  小程序开发者            在 SDKWORK Runtime             兼容性、错误定位、调试体验
+                          中运行已有工程                 
+
+  SDKWORK 应用工厂开发者  生成并分发可运行的小程序包     包规范、运行 API、自动化测试
+
+  宿主 App 开发者         将 Runtime 嵌入自己的应用      SDK、生命周期、渲染容器、权限
+
+  企业客户                在私有环境运行企业小程序       隔离、安全、审计、版本控制
+
+  DevTools 用户           调试小程序和分析性能           Sources、Console、Inspector、Trace
+
+  Runtime 平台维护者      维护基础库、平台适配和兼容性   扩展性、协议稳定性、测试覆盖
+  -------------------------------------------------------------------------------------------
+
+## 3.2 典型场景
+
+### 场景 A：运行现有小程序工程
+
+开发者提供符合目标兼容规范的源代码工程或受支持的应用包。Runtime
+读取工程配置、解析页面和资源、加载基础库、创建应用实例并展示首页。
+
+验收结果： - 能识别工程入口和页面配置。 - 能加载页面 JS、WXML、WXSS
+和静态资源。 - 能按规范触发应用和页面生命周期。 -
+能显示页面并处理用户交互。 -
+遇到不支持的能力时提供明确诊断，不得静默伪装成功。
+
+### 场景 B：通过 Chrome DevTools 调试
+
+开发者启动 Debug 模式，Runtime 创建受授权的调试 Target。Chrome DevTools
+通过 CDP 连接后，可以调试 JavaScript、查看
+Console、断点、调用栈和运行时对象。
+
+验收结果： - 支持协议版本可识别。 - 能发现和连接调试 Target。 - JS
+断点、单步、变量和异常信息可用。 - 断开调试不会导致应用崩溃或状态损坏。
+
+### 场景 C：通过 SDKWORK DevTools 调试
+
+开发者打开独立 DevTools，连接本地或经授权的远程 Runtime。除 JS
+调试外，还可以检查 WXML 节点、WXSS
+样式、组件属性、页面数据、网络请求和生命周期 Trace。
+
+### 场景 D：嵌入宿主应用
+
+宿主应用通过 Rust API 或 C ABI 创建
+Runtime、加载应用包、展示渲染视图、响应生命周期并注册平台能力。
+
+### 场景 E：企业多应用运行
+
+宿主环境运行多个来源不同的小程序。每个应用有独立身份、存储空间、文件命名空间、权限策略、网络策略和调试授权。应用之间不得直接读取彼此数据。
+
+------------------------------------------------------------------------
+
+# 4. 产品范围与版本策略
+
+## 4.1 产品组成
+
+产品由以下可独立演进的交付物组成：
+
+1.  **Runtime Core**：运行时核心与应用执行管理。
+2.  **Compatibility Layer**：微信小程序语言、组件、API 和基础库兼容。
+3.  **Renderer System**：WebView、Headless、Native 和 Web 渲染适配。
+4.  **Platform Adapters**：操作系统和宿主能力适配。
+5.  **Inspector Service**：调试 Target、协议、会话和数据采集。
+6.  **SDKWORK MiniProgram DevTools**：独立开发者工具。
+7.  **SDKs**：Rust API、C ABI 及各平台语言绑定。
+8.  **Compatibility Test Suite**：自动化兼容测试和报告工具。
+9.  **Developer Documentation**：开发、集成、调试和发布文档。
+
+## 4.2 版本分层
+
+版本号必须分别管理：
+
+-   Runtime Version
+-   Compatibility Profile Version
+-   Base Library Compatibility Version
+-   CDP Protocol Version
+-   MiniProgram Protocol Version
+-   Renderer Version
+-   Platform Adapter Version
+-   Package Format Version
+
+一个 Runtime
+版本可以支持多个兼容配置；兼容配置不能简单等同于某个微信基础库版本。
+
+## 4.3 交付优先级
+
+-   P0：首个可用版本的必要能力。
+-   P1：完整应用兼容和专业调试所需能力。
+-   P2：增强能力和高级渲染能力。
+
+优先级描述交付顺序，不代表最终 Full Compatibility 可以永久缺失 P1/P2
+中属于目标规范的能力。
+
+------------------------------------------------------------------------
+
+# 5. 功能需求
+
+# 5.1 Runtime 生命周期与实例管理
+
+## 5.1.1 Runtime 创建
+
+Runtime 必须提供统一创建入口，支持配置：
+
+-   Runtime 版本和兼容配置。
+-   JavaScript 引擎。
+-   Renderer 类型。
+-   资源加载器。
+-   日志级别。
+-   调试开关。
+-   安全策略。
+-   内存和执行资源预算。
+-   平台能力 Provider。
+-   数据存储 Provider。
+
+需求： - 创建失败必须返回结构化错误。 - 配置必须经过校验。 - 不允许不同
+Runtime 实例意外共享应用私有状态。 - 初始化过程必须支持诊断日志。
+
+优先级：P0。
+
+## 5.1.2 应用实例
+
+每个小程序应用具有独立 Application Context，至少包括：
+
+-   App ID / Package ID。
+-   应用版本。
+-   兼容配置。
+-   应用入口。
+-   页面注册表。
+-   模块缓存。
+-   存储命名空间。
+-   文件系统命名空间。
+-   权限策略。
+-   网络策略。
+-   调试状态。
+-   运行状态。
+
+支持： - Load - Launch - Show - Hide - Reload - Unload - Destroy
+
+必须保证重复调用、异常退出和并发调用的状态行为明确。
+
+优先级：P0。
+
+## 5.1.3 多实例隔离
+
+要求： - 每个应用拥有独立 JS 执行环境。 -
+应用内部页面按目标微信生命周期和共享语义运行。 - Worker
+使用独立执行上下文。 - 应用间 Storage、文件、模块缓存和权限不得混用。 -
+资源释放后不得保留可访问的旧句柄。 - 调试会话只能访问被授权的 Runtime
+和应用。
+
+优先级：P0。
+
+------------------------------------------------------------------------
+
+# 5.2 应用包与工程管理
+
+## 5.2.1 支持的输入形式
+
+首期支持： - 标准源代码工程目录。 - ZIP 格式工程包。 - Runtime
+定义的标准应用包。
+
+后续评估： - 可合法获取和解析的微信开发包。 - 其他经授权的打包格式。
+
+对于未公开或受保护的专有封装格式，必须单独评估法律、技术和授权条件，不得将逆向解析作为默认产品承诺。
+
+## 5.2.2 工程识别
+
+Runtime 应识别并验证： - app.json - app.js - app.wxss - 页面配置 - 页面
+JS - 页面 WXML - 页面 WXSS - 自定义组件配置 - 静态资源 - 分包配置 - npm
+依赖清单 - 项目兼容性元数据
+
+错误信息必须指出文件路径、错误类别和可定位的源码位置。
+
+## 5.2.3 包安全
+
+-   防止 ZIP 路径穿越。
+-   限制解压文件数、总大小和单文件大小。
+-   校验资源路径。
+-   校验包清单和可选签名。
+-   支持包完整性哈希。
+-   对不可信包执行资源配额检查。
+-   加载失败不得破坏已有运行实例。
+
+优先级：P0。
+
+------------------------------------------------------------------------
+
+# 5.3 JavaScript 执行与模块系统
+
+## 5.3.1 JavaScript Engine
+
+首期以 V8 为主要 JavaScript 引擎，并通过抽象接口隔离引擎实现。
+
+要求： - 创建和销毁独立执行上下文。 - 管理 JS 对象与 Rust
+对象的生命周期。 - 支持异常捕获和结构化错误。 - 支持 Promise
+和异步任务。 - 支持定时器。 - 支持模块加载。 - 支持 Source Map。 - 支持
+Inspector。 - 支持执行时间和内存资源限制。
+
+## 5.3.2 模块系统
+
+根据目标兼容规范实现： - CommonJS。 - ES Modules。 -
+相对路径和绝对路径解析。 - npm 包解析。 - 模块缓存。 - 循环依赖行为。 -
+package.json 相关入口规则。 - 资源模块和静态资源引用。 -
+错误堆栈与源码映射。
+
+## 5.3.3 Worker
+
+支持 Worker 独立上下文： - 创建和终止。 - 消息发送和接收。 -
+错误通知。 - 文件和模块加载策略。 - 权限边界。 - 资源配额。 - Worker
+Inspector Target。
+
+优先级：核心执行 P0；完整模块和 Worker 兼容按兼容矩阵分期交付。
+
+------------------------------------------------------------------------
+
+# 5.4 微信兼容层
+
+## 5.4.1 兼容原则
+
+兼容层必须以明确版本的公开规范、可获得的官方文档和合法测试样例为依据。对每个能力记录： -
+规范来源。 - 目标版本。 - 支持平台。 - 参数和返回值。 - 异常及错误码。 -
+异步行为。 - 生命周期关联。 - 测试用例。 - 当前实现状态。 - 已知差异。
+
+不得仅依据 API 名称相同就判定行为兼容。
+
+## 5.4.2 WXML
+
+支持目标规范中的： - 标签和属性语法。 - 文本插值和表达式。 -
+条件渲染。 - 列表渲染。 - template。 - import / include。 - 事件绑定。 -
+事件冒泡和捕获。 - 自定义组件。 - 组件属性和数据绑定。 - 插槽。 - 动态
+class / style。 - 节点身份和更新规则。 - 源码位置映射。
+
+要求： - Parser 输出可诊断 AST。 - 编译错误包含文件、行列和错误原因。 -
+运行时节点可映射回源码。 - 数据变化应产生最小化或批量化视图更新。 -
+更新过程不得丢失事件监听和组件状态。
+
+优先级：基础语法 P0；目标规范全部语法按兼容矩阵交付。
+
+## 5.4.3 WXSS
+
+支持目标规范中的： - 选择器。 - 优先级。 - 继承。 - 组件样式作用域。 -
+rpx。 - 样式导入。 - 动态 class 和 style。 - 媒体查询。 - 支持范围内的
+CSS 属性和布局行为。
+
+必须区分解析、级联、计算样式、布局和绘制阶段。
+
+不能简单依赖 WebView 原生 CSS 就宣称 WXSS 完整兼容；WebView 与 Native
+Renderer 的结果必须由统一兼容测试验证。
+
+## 5.4.4 WXS
+
+支持： - WXS 模块语法。 - 模块作用域。 - 模块导入和缓存。 -
+模板内调用。 - 数据类型转换。 - 错误处理。 - 与 JS
+和模板之间的边界行为。
+
+WXS 必须作为独立兼容子系统实现和测试，不能未经验证地等同于普通页面
+JavaScript。
+
+## 5.4.5 App / Page / Component
+
+支持： - App 注册和生命周期。 - Page 注册和生命周期。 - Component
+注册。 - Properties。 - Data。 - Methods。 - Observers。 - Lifetimes。 -
+Page Lifetimes。 - Behaviors。 - Relations。 - Slots。 -
+自定义组件事件。 - 组件样式隔离。 - 页面栈和页面数据。
+
+生命周期必须有可测试的顺序、触发次数和销毁语义。
+
+## 5.4.6 基础组件
+
+建立官方目标规范的组件目录和兼容矩阵，至少覆盖：
+
+-   View、ScrollView、Swiper。
+-   Text、RichText。
+-   Image、Icon、Progress。
+-   Button、Checkbox、Radio、Input、Textarea。
+-   Form、Label、Picker、Slider、Switch。
+-   Navigator。
+-   Video、Audio 相关能力。
+-   Canvas。
+-   Map。
+-   Camera。
+-   Cover View / Cover Image。
+-   其他目标规范中适用的基础组件。
+
+组件需求包括： - 属性。 - 默认值。 - 属性变化。 - 事件。 - 事件参数。 -
+样式行为。 - 生命周期。 - 平台支持。 - 无障碍语义。 - Inspector 元数据。
+
+## 5.4.7 wx API
+
+建立统一 API Registry。每个 API 定义： - 名称。 - 类别。 - 参数
+Schema。 - 返回 Schema。 - Success / Fail / Complete 回调。 - Promise
+行为（适用时）。 - 错误码。 - 权限要求。 - 平台支持情况。 - Provider
+实现。 - 测试用例。
+
+API 分类： - 基础与系统信息。 - 网络请求和下载上传。 - 路由和页面。 -
+Storage。 - 文件系统。 - 界面交互。 - 媒体。 - 位置。 - 设备。 -
+蓝牙。 - Worker。 - Canvas。 - 分享。 - 支付。 -
+广告和订阅等平台服务能力。
+
+依赖微信账号、微信服务端、支付渠道、广告平台或授权服务的 API，必须由真实
+Provider 或明确的"不支持/需配置"状态处理。禁止返回伪造成功结果。
+
+------------------------------------------------------------------------
+
+# 5.5 页面路由与生命周期
+
+支持目标兼容规范中的： - 页面注册。 - 页面栈。 - navigateTo。 -
+redirectTo。 - switchTab。 - navigateBack。 - reLaunch。 - 页面参数。 -
+页面显示和隐藏。 - 页面销毁。 - TabBar。 - 页面配置。 -
+页面滚动位置及相关行为。
+
+要求： - 路由操作具有确定的状态转移。 - 页面栈与视图容器状态一致。 -
+生命周期事件与路由动作一致。 - 页面异常时提供恢复或明确失败结果。 -
+Inspector 能查看页面栈和生命周期时间线。
+
+优先级：P0。
+
+------------------------------------------------------------------------
+
+# 5.6 Renderer 与 UI
+
+## 5.6.1 统一视图模型
+
+Runtime 必须维护与具体渲染后端无关的视图描述和组件状态。Renderer
+负责把标准 Render Tree 映射到平台视图或绘制系统。
+
+## 5.6.2 WebView Renderer
+
+首期能力： - 创建渲染容器。 - 将标准 Render Tree
+映射为受控的宿主视图。 - 批量处理节点新增、删除和属性更新。 -
+事件回传。 - 尺寸和 DPR 适配。 - 截图和节点信息采集。 -
+生命周期和资源释放。
+
+安全要求： - 不直接执行未经处理的小程序源码。 - 不向小程序暴露任意宿主
+JS Bridge。 - 所有宿主调用必须经过 Runtime API 和权限系统。
+
+## 5.6.3 Headless Renderer
+
+用于： - 自动化测试。 - 组件树测试。 - 事件测试。 - 数据更新测试。 -
+快照测试。 - CI 环境运行。
+
+## 5.6.4 Native Renderer
+
+作为后续能力： - Rust 原生布局和绘制。 - 统一文字排版。 - 滚动和手势。 -
+图片和媒体资源。 - GPU 加速。 - 事件系统。 - 截图与调试节点映射。
+
+Native Renderer
+需要达到与目标兼容规范一致的可验证行为，不得只实现视觉相似。
+
+## 5.6.5 Web Renderer
+
+后续提供浏览器运行能力。Web 平台的宿主 API
+必须明确权限和浏览器能力限制。
+
+------------------------------------------------------------------------
+
+# 5.7 Host Platform 与 Native API
+
+Runtime 通过 Platform Provider 获取宿主能力。
+
+平台能力包括： - 网络。 - 文件系统。 - 安全存储。 - 剪贴板。 - 相机。 -
+相册。 - 麦克风。 - 定位。 - 蓝牙。 - 传感器。 - 振动。 -
+屏幕和设备信息。 - 分享。 - 支付等外部 Provider。
+
+每项能力必须声明： - 平台支持矩阵。 - 权限前置条件。 - 用户授权流程。 -
+失败语义。 - 数据返回格式。 - 隐私说明。 - 是否需要外部服务配置。
+
+宿主应用可注册自定义 Provider，但不能绕过 Runtime 的权限和审计机制。
+
+------------------------------------------------------------------------
+
+# 5.8 Storage 与文件系统
+
+## Storage
+
+支持： - 应用级命名空间。 - Key-Value 存储。 - 数据类型和序列化规则。 -
+容量限制。 - 清理策略。 - 迁移和版本管理。 - 调试查看。 - 应用卸载清理。
+
+## 文件系统
+
+支持： - 应用私有目录。 - 临时目录。 - 用户授权文件访问。 - 文件读写。 -
+目录管理。 - 文件元信息。 - 配额。 - 路径规范化。 - 权限检查。
+
+应用不得直接访问宿主任意路径。所有路径必须经过虚拟文件系统和权限策略。
+
+------------------------------------------------------------------------
+
+# 5.9 Network
+
+支持目标规范中适用的： - Request。 - Upload。 - Download。 -
+WebSocket。 - 超时。 - Header。 - 状态码。 - 响应数据。 - 取消请求。 -
+错误处理。 - 域名和网络策略。
+
+Inspector Network 面板应显示： - 请求 URL。 - 方法。 - 请求头。 -
+请求体（受隐私策略控制）。 - 响应头。 - 状态码。 - 耗时。 - 失败原因。 -
+Initiator。 - 关联页面和调用栈。
+
+不得默认记录密码、Token、Cookie
+等敏感内容。日志和导出数据必须遵守脱敏策略。
+
+------------------------------------------------------------------------
+
+# 5.10 Inspect 与 Debug
+
+## 5.10.1 产品形态
+
+Inspect 采用 Both： 1. CDP 兼容调试接入。 2. SDKWORK 独立 MiniProgram
+DevTools。
+
+## 5.10.2 CDP 能力
+
+至少规划： - Target。 - Runtime。 - Debugger。 - Console。 -
+Profiler。 - HeapProfiler。 - Network。 - Inspector。
+
+必须固定协议版本，并提供协议版本查询、能力发现和兼容测试。
+
+## 5.10.3 自定义 MiniProgram Domain
+
+至少包括： - MiniProgram.Runtime。 - MiniProgram.App。 -
+MiniProgram.Page。 - MiniProgram.Wxml。 - MiniProgram.Wxss。 -
+MiniProgram.Component。 - MiniProgram.AppData。 -
+MiniProgram.Storage。 - MiniProgram.Network。 - MiniProgram.Event。 -
+MiniProgram.Lifecycle。 - MiniProgram.Trace。 -
+MiniProgram.Performance。 - MiniProgram.Device。
+
+每个 Domain 必须有： - 方法定义。 - 参数和返回 Schema。 - 事件定义。 -
+错误码。 - 权限要求。 - 版本兼容策略。 - 协议测试。
+
+## 5.10.4 DevTools 功能
+
+### Target Manager
+
+-   发现 Runtime。
+-   展示应用和页面。
+-   展示 Worker。
+-   连接和断开。
+-   展示 Runtime 和协议版本。
+-   管理授权会话。
+
+### Console
+
+-   日志级别。
+-   JS 异常。
+-   调用栈。
+-   对象展开。
+-   清空和过滤。
+-   日志导出。
+
+### Sources / Debugger
+
+-   源码树。
+-   Source Map。
+-   断点。
+-   条件断点（适用时）。
+-   单步执行。
+-   调用栈。
+-   作用域变量。
+-   异常暂停。
+-   JS 执行上下文。
+
+### WXML Inspector
+
+-   组件树。
+-   节点选择。
+-   节点属性。
+-   节点源码位置。
+-   页面节点数量。
+-   节点更新状态。
+-   选中节点与模拟器联动。
+
+### WXSS Inspector
+
+-   计算样式。
+-   样式来源。
+-   选择器匹配。
+-   盒模型。
+-   rpx 与实际尺寸换算。
+-   样式临时修改。
+-   样式变更回写能力（如产品版本支持）。
+
+### AppData
+
+-   当前页面数据。
+-   组件数据。
+-   实时更新。
+-   数据路径查询。
+-   受控数据编辑。
+-   修改记录。
+-   敏感字段保护。
+
+### Network
+
+-   请求列表。
+-   请求详情。
+-   Headers。
+-   Payload。
+-   Response。
+-   Timing。
+-   Initiator。
+-   过滤和导出。
+
+### Storage
+
+-   KV 查看。
+-   文件列表。
+-   文件元信息。
+-   清理和编辑（仅授权开发模式）。
+-   命名空间信息。
+
+### Performance
+
+-   生命周期 Trace。
+-   JS 执行时间。
+-   Bridge 消息。
+-   布局和绘制时间。
+-   帧率。
+-   长任务。
+-   CPU Profile。
+
+### Memory
+
+-   Heap Snapshot。
+-   对象统计。
+-   内存变化。
+-   可疑引用和泄漏分析（能力允许时）。
+
+## 5.10.5 调试安全
+
+-   Release 默认关闭调试服务。
+-   Debug 服务默认仅监听 localhost。
+-   远程连接必须显式启用。
+-   采用短期授权 Token 或配对机制。
+-   校验 Origin、身份和会话权限。
+-   不允许匿名远程执行 JS。
+-   调试会话可撤销。
+-   调试日志应记录授权和连接事件。
+-   调试断开不得影响应用正常运行。
+
+------------------------------------------------------------------------
+
+# 5.11 DevTools 前端
+
+采用 React + TypeScript，作为独立产品开发。
+
+建议模块： - desktop app。 - web app。 - devtools core。 - protocol
+client。 - inspector frontend。 - JS debugger。 - WXML inspector。 -
+WXSS inspector。 - Console。 - Network。 - AppData。 - Storage。 -
+Performance。 - Memory。 - Device Manager。
+
+前端与 Runtime 通过协议通信，不允许直接依赖 Rust 内部数据结构。
+
+------------------------------------------------------------------------
+
+# 5.12 Plugin 与扩展机制
+
+支持两类扩展：
+
+1.  WASM 插件：适用于受控、可移植的扩展逻辑。
+2.  Native Provider：由宿主应用注册受信任的系统能力。
+
+插件必须声明： - 插件 ID 和版本。 - 入口。 - 所需权限。 - API 版本。 -
+资源预算。 - 来源和签名信息。 - 生命周期。 - 错误处理策略。
+
+插件不得默认拥有宿主文件系统、网络或进程权限。
+
+------------------------------------------------------------------------
+
+# 5.13 SDK 与集成能力
+
+## Rust SDK
+
+提供： - Runtime Builder。 - Runtime Handle。 - Application Handle。 -
+Renderer 注册。 - Platform Provider 注册。 - Inspector 控制。 -
+日志和事件订阅。 - 错误处理。
+
+## C ABI
+
+提供稳定的 opaque handle： - 创建和销毁 Runtime。 - 加载和卸载应用。 -
+启动、隐藏和恢复应用。 - 获取渲染容器信息。 - 注册平台回调。 -
+启用或关闭 Inspect。 - 订阅运行时事件。
+
+ABI 必须明确： - 字符串编码。 - 内存分配和释放责任。 - 线程调用约束。 -
+回调生命周期。 - 错误码。 - ABI 版本。 - 结构体版本兼容。
+
+## 平台绑定
+
+在 C ABI 稳定后，提供 Kotlin/Java、Swift/Objective-C 和 C/C++ 等绑定。
+
+------------------------------------------------------------------------
+
+# 6. 兼容性管理
+
+## 6.1 兼容性矩阵
+
+兼容性按以下维度维护：
+
+1.  语言：WXML、WXSS、WXS、JS、JSON、模块。
+2.  组件：官方基础组件、自定义组件和行为。
+3.  API：参数、结果、错误、权限、异步语义。
+4.  工程：npm、分包、资源、配置和构建。
+5.  生命周期：App、Page、Component、Worker。
+6.  平台：Android、iOS、Windows、macOS、Linux、Web。
+7.  调试：CDP、自定义 Domain、Source Map、Inspector。
+
+## 6.2 兼容等级
+
+-   C0：语法可解析。
+-   C1：基础页面和组件可运行。
+-   C2：生命周期、事件和数据行为正确。
+-   C3：API 行为符合目标规范。
+-   C4：复杂工程、npm、分包和资源行为兼容。
+-   C5：调试、源码映射和性能工具可用。
+
+最终目标为 C5，且每个能力必须有具体测试结果。
+
+## 6.3 能力状态
+
+每项能力使用以下状态： - Planned。 - In Progress。 - Implemented。 -
+Tested。 - Verified。 - Unsupported。 - Platform Limited。 - Requires
+Provider。
+
+"Implemented"不能自动等同于"Verified"。
+
+------------------------------------------------------------------------
+
+# 7. 非功能需求
+
+## 7.1 性能
+
+需要测试和持续优化： - Runtime 冷启动。 - 应用加载。 - 首屏渲染。 -
+页面切换。 - 数据更新。 - 事件响应。 - Bridge 吞吐和延迟。 - CPU
+占用。 - 内存占用。 - GPU 和绘制开销。 - 多实例资源占用。
+
+所有性能结果必须附带硬件、系统、测试工程、构建配置和测试工具版本。
+
+## 7.2 稳定性
+
+-   不得因单个应用异常导致其他应用崩溃。
+-   应用卸载后释放相关资源。
+-   页面反复切换不应持续泄漏资源。
+-   Renderer 异常必须有明确恢复或失败策略。
+-   Inspector 断连不应影响业务运行。
+-   文件和网络失败应返回结构化错误。
+-   长时间运行必须有稳定性测试。
+
+## 7.3 可观测性
+
+提供统一日志和 Trace： - Runtime 创建和销毁。 - 应用加载。 -
+模块解析。 - 页面生命周期。 - API 调用。 - Bridge 消息。 - Renderer
+更新。 - 网络请求。 - 权限决策。 - Inspector 会话。 - 异常和资源告警。
+
+日志应支持关联 Runtime ID、Application ID、Page ID 和 Trace
+ID，同时避免泄露敏感数据。
+
+## 7.4 可维护性
+
+-   Crate 职责清晰。
+-   依赖方向明确。
+-   核心接口版本化。
+-   协议 Schema 可生成和验证。
+-   CI 执行格式检查、静态检查、单测和集成测试。
+-   关键兼容行为有回归测试。
+-   公开 API 有文档和示例。
+
+## 7.5 可移植性
+
+核心 Runtime 不得依赖单一操作系统 UI 框架。平台专属能力通过 Platform
+Adapter 提供。平台差异必须进入兼容矩阵，不得用隐式行为掩盖差异。
+
+------------------------------------------------------------------------
+
+# 8. 安全与隐私需求
+
+## 8.1 隔离模型
+
+每个应用独立拥有： - JS 执行上下文。 - Storage Namespace。 -
+虚拟文件系统命名空间。 - 权限策略。 - 网络策略。 - 资源预算。 -
+插件授权。 - 调试会话。
+
+对于不可信代码，V8 Isolate
+本身不等于操作系统级安全沙箱。生产部署需要结合进程隔离、操作系统权限和资源限制。
+
+## 8.2 权限
+
+所有 Native API 必须经过权限检查。权限至少包括： - API 能力。 -
+资源范围。 - 用户授权状态。 - 授权来源。 - 有效期。 - 撤销状态。
+
+## 8.3 数据安全
+
+-   应用私有数据默认不跨应用共享。
+-   敏感数据不进入普通日志。
+-   调试导出内容支持脱敏。
+-   本地数据可按宿主策略加密。
+-   卸载和清理有明确语义。
+-   远程调试必须认证和授权。
+
+------------------------------------------------------------------------
+
+# 9. 测试与验收
+
+## 9.1 测试类型
+
+1.  Parser 单元测试。
+2.  Compiler 单元测试。
+3.  JS Runtime 测试。
+4.  生命周期测试。
+5.  组件测试。
+6.  API Contract 测试。
+7.  Renderer 测试。
+8.  Inspector 协议测试。
+9.  跨平台集成测试。
+10. 安全测试。
+11. 性能测试。
+12. 长时间稳定性测试。
+
+## 9.2 测试用例结构
+
+每个测试用例至少包括： - 唯一 ID。 - 需求关联 ID。 - 目标规范和版本。 -
+输入工程。 - 执行平台。 - 预期结果。 - 实际结果。 - 截图或
+Trace（适用时）。 - 测试状态。 - 差异说明。
+
+## 9.3 发布门槛
+
+发布前必须： - 所有 P0 用例通过。 - 不存在未处理的阻断级安全问题。 -
+Runtime 和协议版本可查询。 - 所有已声明支持的平台通过对应测试。 -
+已知不兼容能力有明确清单。 - 示例工程可以复现。 - 文档与实际功能一致。 -
+具备回归测试和版本回滚方案。
+
+Full Compatibility
+的最终验收必须覆盖目标兼容矩阵中的全部适用能力。平台服务依赖项可以标记为
+Requires Provider，但必须明确说明所需 Provider 和验证方式。
+
+------------------------------------------------------------------------
+
+# 10. 研发实施计划
+
+以下为初步计划，实际排期应在技术预研和团队资源确认后调整。
+
+## M0：工程基础设施（第 1～2 周）
+
+-   建立 Cargo Workspace。
+-   建立 Crate 依赖规则。
+-   建立 CI。
+-   接入 V8。
+-   定义 Runtime Config。
+-   定义基础错误和日志。
+-   建立 Hello Runtime。
+
+交付：可创建、执行和销毁 JS Runtime。
+
+## M1：基础执行引擎（第 3～8 周）
+
+-   App/Page 生命周期。
+-   模块加载。
+-   WXML Parser。
+-   WXSS Parser。
+-   Component Tree。
+-   数据绑定。
+-   基础 Renderer。
+-   基础 wx API。
+
+交付：可运行基础小程序 Demo。
+
+## M2：微信兼容核心（第 9～16 周）
+
+-   WXS。
+-   自定义组件。
+-   基础组件。
+-   事件机制。
+-   页面路由。
+-   网络和 Storage。
+-   npm。
+-   分包。
+-   资源管理。
+
+交付：可运行多页面和复杂组件 Demo。
+
+## M3：Inspect 系统（第 17～22 周）
+
+-   V8 Inspector。
+-   CDP Gateway。
+-   Console。
+-   JS Debugger。
+-   WXML Inspector。
+-   WXSS Inspector。
+-   AppData。
+-   Network。
+-   Source Map。
+
+交付：Chrome DevTools 调试和 SDKWORK DevTools 基础调试。
+
+## M4：多平台和系统能力（第 23～32 周）
+
+-   Android。
+-   iOS。
+-   Windows。
+-   macOS。
+-   Linux。
+-   Web。
+-   文件系统。
+-   设备和媒体 Provider。
+-   权限系统。
+
+交付：目标平台的核心功能验证。
+
+## M5：生产化（第 33～48 周）
+
+-   性能优化。
+-   安全审计。
+-   内存管理。
+-   异常恢复。
+-   兼容性自动化。
+-   C ABI。
+-   发布体系。
+-   文档和示例。
+
+交付：生产级 SDK 候选版本。
+
+------------------------------------------------------------------------
+
+# 11. 研发团队建议
+
+初期建议 8～10 人： - Rust Runtime 架构师：1。 - Rust Runtime
+工程师：2。 - 编译器工程师：2。 - UI / Renderer 工程师：1～2。 -
+DevTools 工程师：2。 - QA 工程师：1。
+
+平台适配和 Native Renderer 工作量增加时再扩充团队。
+
+------------------------------------------------------------------------
+
+# 12. 交付物清单
+
+## Runtime
+
+-   Rust Workspace。
+-   Runtime Core。
+-   JavaScript Engine Adapter。
+-   微信兼容层。
+-   Renderer Interface。
+-   WebView Renderer。
+-   Headless Renderer。
+-   Platform Adapter。
+-   Security Module。
+
+## Inspector
+
+-   CDP Gateway。
+-   MiniProgram Custom Protocol。
+-   V8 Inspector Adapter。
+-   WXML / WXSS Inspector。
+-   AppData Inspector。
+-   Network / Performance / Trace。
+
+## DevTools
+
+-   独立桌面开发者工具。
+-   Web DevTools（如纳入对应版本）。
+-   协议客户端。
+-   调试面板。
+-   使用手册。
+
+## SDK
+
+-   Rust SDK。
+-   C ABI SDK。
+-   平台绑定。
+-   示例工程。
+
+## 测试和文档
+
+-   兼容性矩阵。
+-   自动化测试集。
+-   性能报告。
+-   安全报告。
+-   API 文档。
+-   集成指南。
+-   发布说明。
+
+------------------------------------------------------------------------
+
+# 13. 需求追踪与变更管理
+
+每条需求必须具有唯一 ID，建议格式：
+
+-   RT：Runtime。
+-   WX：微信兼容。
+-   UI：组件与渲染。
+-   API：平台 API。
+-   INS：Inspect。
+-   DT：DevTools。
+-   SEC：安全。
+-   SDK：SDK 与集成。
+-   QA：测试和验收。
+
+例如： - RT-001：创建独立 Runtime 实例。 - WX-001：解析 WXML
+条件渲染。 - UI-001：构建组件树。 - API-001：注册并调用 wx API。 -
+INS-001：创建 CDP Target。 - DT-001：显示 WXML 节点树。 -
+SEC-001：隔离不同应用的 Storage。 - SDK-001：通过 C ABI 创建 Runtime。
+
+需求变更必须记录： - 变更原因。 - 影响模块。 - 兼容性影响。 -
+安全影响。 - 版本影响。 - 测试影响。 - 审批记录。
+
+------------------------------------------------------------------------
+
+# 14. 产品决策记录
+
+当前已确定的产品决策：
+
+  决策            结论
+  --------------- ------------------------------------------
+  工程名称        sdkwork-miniprogram-runtime
+  核心语言        Rust
+  Flutter         不作为 Runtime 核心依赖
+  微信兼容目标    Full
+  Inspect 形态    Both：CDP + 独立 DevTools
+  JS 引擎         V8 为首选
+  渲染架构        多 Renderer 抽象
+  首期 Renderer   WebView + Headless
+  后续 Renderer   Native Renderer
+  DevTools 技术   React + TypeScript
+  插件体系        WASM + Trusted Native Provider
+  对外 SDK        Rust + C ABI
+  多平台          Android、iOS、Windows、macOS、Linux、Web
+
+待技术预研确认： - 各平台 V8 构建、体积和许可合规方案。 - iOS
+平台引擎分发和审核约束。 - 微信公开规范和目标基础库版本清单。 -
+官方组件、API 的逐项兼容范围。 - CDP 前端版本及自定义 Domain
+的集成方式。 - WebView 与 Native Renderer 的一致性边界。 - `.wxapkg`
+等专有包格式的授权和可行性。 - Native Renderer 的正式立项时间。
+
+------------------------------------------------------------------------
+
+# 15. 产品最终定义
+
+`sdkwork-miniprogram-runtime` 是 SDKWORK
+应用生态的跨平台小程序执行引擎。
+
+它通过 Rust Runtime Core、微信兼容层、统一 Renderer、平台 Provider、CDP
+和独立
+DevTools，为小程序提供从加载、执行、渲染、系统能力调用到调试、性能分析和安全隔离的完整运行环境。
+
+最终交付的不只是一个能够运行页面的容器，而是一套可以被应用工厂、宿主
+App、企业平台和开发工具复用的标准化小程序 Runtime 基础设施。

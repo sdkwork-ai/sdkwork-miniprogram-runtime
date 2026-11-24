@@ -11,14 +11,20 @@ use crate::error::{LoaderError, LoaderResult};
 static STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy)]
+/// Resource limits applied before and during ZIP extraction.
 pub struct ArchiveLimits {
+    /// Maximum compressed archive size in bytes.
     pub max_archive_bytes: u64,
+    /// Maximum number of files and directories in the archive.
     pub max_entries: usize,
+    /// Maximum uncompressed size of one file in bytes.
     pub max_file_bytes: u64,
+    /// Maximum aggregate uncompressed size in bytes.
     pub max_total_uncompressed_bytes: u64,
 }
 
 impl Default for ArchiveLimits {
+    /// Uses conservative defaults for an untrusted source package.
     fn default() -> Self {
         Self {
             max_archive_bytes: 128 * 1024 * 1024,
@@ -29,6 +35,10 @@ impl Default for ArchiveLimits {
     }
 }
 
+/// Extracts a ZIP archive into a new destination after validating every entry path and size.
+///
+/// # Errors
+/// Returns an error for invalid archives, unsafe paths, exceeded limits, or filesystem failures.
 pub fn extract_zip(
     archive_path: impl AsRef<Path>,
     destination: impl AsRef<Path>,
@@ -45,7 +55,7 @@ pub fn extract_zip(
             limits.max_archive_bytes
         )));
     }
-    if destination.exists() {
+    if path_entry_exists(destination)? {
         return Err(LoaderError::DestinationExists(destination.to_path_buf()));
     }
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
@@ -69,12 +79,23 @@ pub fn extract_zip(
 
     let staging = create_staging_directory(&parent, name)?;
     let result = extract_entries(&mut archive, &staging, limits).and_then(|()| {
+        if path_entry_exists(&destination)? {
+            return Err(LoaderError::DestinationExists(destination.clone()));
+        }
         fs::rename(&staging, &destination).map_err(|error| LoaderError::io(&destination, error))
     });
     if result.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
     result
+}
+
+fn path_entry_exists(path: &Path) -> LoaderResult<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(LoaderError::io(path, error)),
+    }
 }
 
 fn extract_entries<R: Read + std::io::Seek>(
@@ -100,13 +121,18 @@ fn extract_entries<R: Read + std::io::Seek>(
             )));
         }
         if let Some(mode) = entry.unix_mode() {
-            if mode & 0o170000 == 0o120000 {
+            if mode & 0o170_000 == 0o120_000 {
                 return Err(LoaderError::UnsafeArchivePath(format!(
                     "symbolic links are not allowed: {raw_name}"
                 )));
             }
         }
         if entry.is_dir() {
+            if entry.size() != 0 {
+                return Err(LoaderError::InvalidArchive(format!(
+                    "directory entry {raw_name} contains file data"
+                )));
+            }
             fs::create_dir_all(staging.join(relative_path))
                 .map_err(|error| LoaderError::io(staging, error))?;
             continue;
@@ -183,7 +209,7 @@ fn create_staging_directory(
         ));
         match fs::create_dir(&path) {
             Ok(()) => return Ok(path),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(LoaderError::io(path, error)),
         }
     }

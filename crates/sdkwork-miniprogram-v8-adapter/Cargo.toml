@@ -12,6 +12,7 @@ name = "sdkwork_miniprogram_v8_adapter"
 path = "src/lib.rs"
 
 [dependencies]
+tracing.workspace = true
 v8.workspace = true
 
 [lints]

@@ -3,16 +3,92 @@
   "kind": "sdkwork.component.spec",
   "component": {
     "name": "sdkwork-miniprogram-package-loader",
-    "domain": "runtime",
+    "displayName": "SDKWORK Mini Program Package Loader",
+    "version": "0.1.0",
+    "type": "rust-crate",
+    "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-package-loader",
+    "domain": "mini-program-runtime",
     "capability": "mini-program-package-loading",
-    "root": "sdkwork-miniprogram-runtime"
+    "languages": [
+      "rust"
+    ],
+    "generated": false,
+    "manifests": [
+      "Cargo.toml",
+      "specs/component.spec.json"
+    ]
   },
+  "canonicalSpecs": [
+    {
+      "file": "COMPONENT_SPEC.md",
+      "path": "../../../sdkwork-specs/COMPONENT_SPEC.md",
+      "purpose": "Component contract manifest requirements."
+    },
+    {
+      "file": "CODE_STYLE_SPEC.md",
+      "path": "../../../sdkwork-specs/CODE_STYLE_SPEC.md",
+      "purpose": "Authored source structure and generated code boundaries."
+    },
+    {
+      "file": "NAMING_SPEC.md",
+      "path": "../../../sdkwork-specs/NAMING_SPEC.md",
+      "purpose": "Canonical SDKWORK naming rules."
+    },
+    {
+      "file": "DEPENDENCY_MANAGEMENT_SPEC.md",
+      "path": "../../../sdkwork-specs/DEPENDENCY_MANAGEMENT_SPEC.md",
+      "purpose": "Cargo workspace and dependency ownership rules."
+    },
+    {
+      "file": "RUST_CODE_SPEC.md",
+      "path": "../../../sdkwork-specs/RUST_CODE_SPEC.md",
+      "purpose": "Rust crate and module rules."
+    },
+    {
+      "file": "SECURITY_SPEC.md",
+      "path": "../../../sdkwork-specs/SECURITY_SPEC.md",
+      "purpose": "Secure file and archive input handling."
+    }
+  ],
   "contracts": {
-    "layerRole": "runtime-package-loader",
-    "globalStandards": [
-      "../../../../sdkwork-specs/RUST_CODE_SPEC.md",
-      "../../../../sdkwork-specs/DEPENDENCY_MANAGEMENT_SPEC.md",
-      "../../../../sdkwork-specs/SECURITY_SPEC.md"
+    "layerRole": "runtime-engine-adapter",
+    "publicExports": [
+      "load_project",
+      "extract_zip",
+      "MiniProgramProject",
+      "ArchiveLimits",
+      "LoaderError",
+      "LoaderResult"
+    ],
+    "providedPorts": [
+      {
+        "name": "miniProgramProjectLoading",
+        "export": "load_project"
+      },
+      {
+        "name": "miniProgramArchiveExtraction",
+        "export": "extract_zip"
+      }
+    ],
+    "requiredPorts": [],
+    "runtimeEntrypoints": [
+      "load_project",
+      "extract_zip"
+    ],
+    "routeManifest": null,
+    "sdkClients": [],
+    "sdkDependencies": [],
+    "dependencyApiExports": [],
+    "dependencyApiSurfaces": [],
+    "events": [],
+    "configKeys": []
+  },
+  "integration": {
+    "authority": "The runtime crate provides project and archive loading primitives."
+  },
+  "verification": {
+    "commands": [
+      "cargo test -p sdkwork-miniprogram-package-loader"
     ]
   }
 }

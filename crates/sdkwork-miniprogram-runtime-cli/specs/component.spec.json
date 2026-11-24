@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "kind": "sdkwork.component.spec",
+  "component": {
+    "name": "sdkwork-miniprogram-runtime-cli",
+    "displayName": "SDKWORK Mini Program Runtime CLI",
+    "version": "0.1.0",
+    "type": "rust-crate",
+    "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-runtime-cli",
+    "domain": "mini-program-runtime",
+    "capability": "project-inspection-and-runtime-diagnostics",
+    "languages": ["rust"],
+    "generated": false,
+    "manifests": ["Cargo.toml", "specs/component.spec.json"]
+  },
+  "canonicalSpecs": [
+    { "file": "RUST_CODE_SPEC.md", "path": "../../../sdkwork-specs/RUST_CODE_SPEC.md", "purpose": "Rust CLI and dependency boundaries." },
+    { "file": "TEST_SPEC.md", "path": "../../../sdkwork-specs/TEST_SPEC.md", "purpose": "CLI behavior and project inspection tests." },
+    { "file": "SECURITY_SPEC.md", "path": "../../../sdkwork-specs/SECURITY_SPEC.md", "purpose": "No fabricated host capability behavior." }
+  ],
+  "contracts": {
+    "layerRole": "runtime-cli",
+    "publicExports": [],
+    "providedPorts": [],
+    "requiredPorts": [
+      { "name": "applicationLifecycle", "export": "sdkwork-miniprogram-execution-engine", "provider": "sdkwork-miniprogram-execution-engine" },
+      { "name": "projectLoading", "export": "sdkwork-miniprogram-package-loader", "provider": "sdkwork-miniprogram-package-loader" },
+      { "name": "wxmlParsing", "export": "sdkwork-miniprogram-wxml-compiler", "provider": "sdkwork-miniprogram-wxml-compiler" },
+      { "name": "headlessStructure", "export": "sdkwork-miniprogram-headless-renderer", "provider": "sdkwork-miniprogram-headless-renderer" },
+      { "name": "javascriptEvaluation", "export": "sdkwork-miniprogram-v8-adapter", "provider": "sdkwork-miniprogram-v8-adapter" }
+    ],
+    "runtimeEntrypoints": ["inspect", "parse-wxml", "eval-js", "version"],
+    "routeManifest": null,
+    "sdkClients": [],
+    "sdkDependencies": [],
+    "dependencyApiExports": [],
+    "dependencyApiSurfaces": [],
+    "events": [],
+    "configKeys": []
+  },
+  "verification": {
+    "commands": ["cargo run -p sdkwork-miniprogram-runtime-cli -- --help", "cargo run -p sdkwork-miniprogram-runtime-cli -- inspect examples/hello-mini-program", "cargo run -p sdkwork-miniprogram-runtime-cli -- eval-js 1 + 2"]
+  }
+}

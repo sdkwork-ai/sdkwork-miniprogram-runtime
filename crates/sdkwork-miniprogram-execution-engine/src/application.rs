@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+use tracing::info;
 
 use crate::{ApplicationStorage, Result, RuntimeError};
 
@@ -267,6 +268,12 @@ impl ApplicationHandle {
             self.inner.storage.close()?;
         }
         *state = next;
+        info!(
+            app_id = %self.app_id(),
+            operation,
+            state = ?next,
+            "application lifecycle transition"
+        );
         Ok(())
     }
 }

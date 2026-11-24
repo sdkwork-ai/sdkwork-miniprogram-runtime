@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "kind": "sdkwork.component.spec",
+  "component": {
+    "name": "sdkwork-miniprogram-headless-renderer",
+    "displayName": "SDKWORK Mini Program Headless Renderer",
+    "version": "0.1.0",
+    "type": "rust-crate",
+    "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-headless-renderer",
+    "domain": "mini-program-runtime",
+    "capability": "source-mapped-structural-render-tree",
+    "languages": ["rust"],
+    "generated": false,
+    "manifests": ["Cargo.toml", "specs/component.spec.json"]
+  },
+  "canonicalSpecs": [
+    { "file": "RUST_CODE_SPEC.md", "path": "../../../sdkwork-specs/RUST_CODE_SPEC.md", "purpose": "Rust crate and public API standards." },
+    { "file": "TEST_SPEC.md", "path": "../../../sdkwork-specs/TEST_SPEC.md", "purpose": "Headless structural tree behavior tests." },
+    { "file": "COMPONENT_SPEC.md", "path": "../../../sdkwork-specs/COMPONENT_SPEC.md", "purpose": "Component contract ownership." }
+  ],
+  "contracts": {
+    "layerRole": "renderer-adapter",
+    "publicExports": ["build", "RenderTree", "RenderNode", "RenderAttribute"],
+    "providedPorts": [{ "name": "headlessRenderTree", "export": "build" }],
+    "requiredPorts": [{ "name": "wxmlDocument", "export": "Document", "provider": "sdkwork-miniprogram-wxml-compiler" }],
+    "runtimeEntrypoints": ["build"],
+    "routeManifest": null,
+    "sdkClients": [],
+    "sdkDependencies": [],
+    "dependencyApiExports": [],
+    "dependencyApiSurfaces": [],
+    "events": [],
+    "configKeys": []
+  },
+  "verification": {
+    "commands": ["cargo test -p sdkwork-miniprogram-headless-renderer", "cargo clippy -p sdkwork-miniprogram-headless-renderer --all-targets -- -D warnings"]
+  }
+}

@@ -4,25 +4,53 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     /// A runtime-wide configuration value was invalid.
-    InvalidConfiguration { field: &'static str, reason: String },
+    InvalidConfiguration {
+        /// Name of the rejected configuration field.
+        field: &'static str,
+        /// Validation failure explanation.
+        reason: String,
+    },
     /// Application package metadata did not pass validation.
-    InvalidManifest { field: &'static str, reason: String },
+    InvalidManifest {
+        /// Name of the rejected application manifest field.
+        field: &'static str,
+        /// Validation failure explanation.
+        reason: String,
+    },
     /// An application with the same package identifier is already registered.
-    ApplicationAlreadyLoaded { app_id: String },
+    ApplicationAlreadyLoaded {
+        /// Conflicting application identifier.
+        app_id: String,
+    },
     /// No application with the requested package identifier is registered.
-    ApplicationNotFound { app_id: String },
+    ApplicationNotFound {
+        /// Requested application identifier.
+        app_id: String,
+    },
     /// A lifecycle operation is invalid for the application's current state.
     InvalidState {
+        /// Application identifier for the rejected transition.
         app_id: String,
+        /// State observed when the operation was requested.
         state: String,
+        /// Lifecycle operation requested.
         operation: &'static str,
     },
     /// The application context has already been destroyed.
-    ApplicationDestroyed { app_id: String },
+    ApplicationDestroyed {
+        /// Destroyed application identifier.
+        app_id: String,
+    },
     /// The application's private storage namespace has been released.
-    ApplicationStorageClosed { app_id: String },
+    ApplicationStorageClosed {
+        /// Application identifier owning the released storage namespace.
+        app_id: String,
+    },
     /// A runtime synchronization primitive was poisoned.
-    LockPoisoned { resource: &'static str },
+    LockPoisoned {
+        /// Runtime resource guarded by the poisoned synchronization primitive.
+        resource: &'static str,
+    },
 }
 
 /// Result type used by the runtime execution engine.

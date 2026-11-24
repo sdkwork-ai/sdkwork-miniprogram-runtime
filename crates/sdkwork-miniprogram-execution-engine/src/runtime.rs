@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tracing::info;
 
 use crate::{
     ApplicationHandle, ApplicationManifest, ApplicationStorage, RendererKind, Result,
@@ -57,6 +58,12 @@ impl RuntimeBuilder {
     /// Returns [`RuntimeError::InvalidConfiguration`] if the configuration is invalid.
     pub fn build(self) -> Result<Runtime> {
         self.config.validate()?;
+        info!(
+            runtime_version = %self.config.runtime_version,
+            compatibility_profile = %self.config.compatibility_profile,
+            renderer = ?self.config.renderer,
+            "runtime created"
+        );
         Ok(Runtime {
             inner: Arc::new(RuntimeInner {
                 config: self.config,
@@ -101,6 +108,7 @@ impl Runtime {
             });
         }
         let app_id = manifest.app_id.clone();
+        let page_count = manifest.pages.len();
         let storage = ApplicationStorage::new(
             manifest.app_id.clone(),
             self.inner
@@ -111,6 +119,7 @@ impl Runtime {
         );
         let handle = ApplicationHandle::new(manifest, storage);
         applications.insert(app_id, handle.clone());
+        info!(app_id = %handle.app_id(), page_count, "application loaded");
         Ok(handle)
     }
 
@@ -179,6 +188,7 @@ impl Runtime {
             })?;
         transition(handle)?;
         applications.remove(app_id);
+        info!(app_id, "application removed from runtime");
         Ok(())
     }
 }

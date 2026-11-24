@@ -26,9 +26,19 @@ pub enum Node {
     /// Nested element and its contents.
     Element(Element),
     /// Text outside interpolation delimiters.
-    Text { value: String, span: Span },
+    Text {
+        /// Text content as written in the source file.
+        value: String,
+        /// Source location of this text segment.
+        span: Span,
+    },
     /// Expression body retained without evaluating it.
-    Interpolation { expression: String, span: Span },
+    Interpolation {
+        /// Unparsed expression body inside `{{ ... }}`.
+        expression: String,
+        /// Source location including interpolation delimiters.
+        span: Span,
+    },
 }
 
 /// Element node with source-located attributes and children.

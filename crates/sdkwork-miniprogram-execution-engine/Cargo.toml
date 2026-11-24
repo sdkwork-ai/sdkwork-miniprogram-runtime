@@ -11,5 +11,8 @@ description = "Configuration, lifecycle, and isolation primitives for SDKWORK Mi
 name = "sdkwork_miniprogram_execution_engine"
 path = "src/lib.rs"
 
+[dependencies]
+tracing.workspace = true
+
 [lints]
 workspace = true

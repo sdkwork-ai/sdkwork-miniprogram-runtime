@@ -1,0 +1,4 @@
+<view class="page">
+  <text>{{title}}</text>
+  <button bindtap="onTap">Continue</button>
+</view>

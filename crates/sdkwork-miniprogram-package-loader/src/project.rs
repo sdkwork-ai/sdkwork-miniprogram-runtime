@@ -64,6 +64,9 @@ pub struct MiniProgramProject {
 
 impl MiniProgramProject {
     /// Reads a project resource after resolving and checking its canonical path.
+    ///
+    /// # Errors
+    /// Returns an error when the path is invalid, missing, or resolves outside the project root.
     pub fn read_file(&self, relative: impl AsRef<Path>) -> LoaderResult<Vec<u8>> {
         let relative = relative.as_ref();
         let path = resolve_file(&self.root, relative)
@@ -86,7 +89,13 @@ impl MiniProgramProject {
     }
 }
 
+type ProjectRoutes = Vec<(PathBuf, PathBuf)>;
+type ResolvedProjectFiles = (PathBuf, Option<PathBuf>, Vec<PageDefinition>);
+
 /// Parses `app.json`, resolves source files, and rejects resources escaping the root.
+///
+/// # Errors
+/// Returns an error when the root, manifest, declared routes, or required page files are invalid.
 pub fn load_project(root: impl AsRef<Path>) -> LoaderResult<MiniProgramProject> {
     let requested_root = root.as_ref();
     let root =
@@ -95,11 +104,26 @@ pub fn load_project(root: impl AsRef<Path>) -> LoaderResult<MiniProgramProject> 
         return Err(LoaderError::NotDirectory(root));
     }
 
+    let manifest = read_manifest(&root)?;
+    let routes = validate_routes(&manifest)?;
+    let (app_script_path, app_style_path, pages) = resolve_project_files(&root, routes)?;
+
+    Ok(MiniProgramProject {
+        root,
+        manifest,
+        pages,
+        app_script_path,
+        app_style_path,
+    })
+}
+
+fn read_manifest(root: &Path) -> LoaderResult<ProjectManifest> {
     let manifest_relative = Path::new("app.json");
-    let manifest_path = resolve_required_file(&root, manifest_relative, manifest_relative)
-        .map_err(|diagnostic| LoaderError::InvalidProject {
+    let manifest_path = resolve_required_file(root, manifest_relative, manifest_relative).map_err(
+        |diagnostic| LoaderError::InvalidProject {
             diagnostics: vec![diagnostic],
-        })?;
+        },
+    )?;
     let manifest_metadata =
         fs::metadata(&manifest_path).map_err(|error| LoaderError::io(&manifest_path, error))?;
     if manifest_metadata.len() > MAX_MANIFEST_BYTES {
@@ -121,6 +145,10 @@ pub fn load_project(root: impl AsRef<Path>) -> LoaderResult<MiniProgramProject> 
             }],
         }
     })?;
+    Ok(manifest)
+}
+
+fn validate_routes(manifest: &ProjectManifest) -> LoaderResult<ProjectRoutes> {
     let page_count = manifest
         .subpackages
         .iter()
@@ -167,6 +195,18 @@ pub fn load_project(root: impl AsRef<Path>) -> LoaderResult<MiniProgramProject> 
             );
         }
     }
+    if let Some(entry_page) = &manifest.entry_page_path {
+        let entry_key = entry_page.replace('\\', "/").to_lowercase();
+        if !known_routes.contains(&entry_key) {
+            diagnostics.push(Diagnostic {
+                kind: DiagnosticKind::InvalidManifest,
+                path: PathBuf::from("app.json"),
+                message: format!("entryPagePath `{entry_page}` does not name a registered page"),
+                line: None,
+                column: None,
+            });
+        }
+    }
     if routes.is_empty() {
         diagnostics.push(Diagnostic {
             kind: DiagnosticKind::InvalidManifest,
@@ -177,9 +217,18 @@ pub fn load_project(root: impl AsRef<Path>) -> LoaderResult<MiniProgramProject> 
         });
     }
 
+    if diagnostics.is_empty() {
+        Ok(routes)
+    } else {
+        Err(LoaderError::InvalidProject { diagnostics })
+    }
+}
+
+fn resolve_project_files(root: &Path, routes: ProjectRoutes) -> LoaderResult<ResolvedProjectFiles> {
     let app_script = PathBuf::from("app.js");
-    let app_script_path = resolve_required_file(&root, &app_script, &app_script);
-    let app_style_path = resolve_optional_file(&root, Path::new("app.wxss"));
+    let app_script_path = resolve_required_file(root, &app_script, &app_script);
+    let app_style_path = resolve_optional_file(root, Path::new("app.wxss"));
+    let mut diagnostics = Vec::new();
     if let Err(diagnostic) = &app_script_path {
         diagnostics.push(diagnostic.clone());
     }
@@ -192,9 +241,9 @@ pub fn load_project(root: impl AsRef<Path>) -> LoaderResult<MiniProgramProject> 
         let script_relative = page_base.with_extension("js");
         let template_relative = page_base.with_extension("wxml");
         let style_relative = page_base.with_extension("wxss");
-        let script_path = resolve_required_file(&root, &script_relative, &script_relative);
-        let template_path = resolve_required_file(&root, &template_relative, &template_relative);
-        let style_path = resolve_optional_file(&root, &style_relative);
+        let script_path = resolve_required_file(root, &script_relative, &script_relative);
+        let template_path = resolve_required_file(root, &template_relative, &template_relative);
+        let style_path = resolve_optional_file(root, &style_relative);
         if let Err(diagnostic) = &script_path {
             diagnostics.push(diagnostic.clone());
         }
@@ -208,14 +257,10 @@ pub fn load_project(root: impl AsRef<Path>) -> LoaderResult<MiniProgramProject> 
             (script_path, template_path, style_path)
         {
             pages.push(PageDefinition {
-                route: if relative_base.as_os_str().is_empty() {
-                    route
-                } else {
-                    relative_base
-                        .join(route)
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                },
+                route: relative_base
+                    .join(route)
+                    .to_string_lossy()
+                    .replace('\\', "/"),
                 script_path,
                 template_path,
                 style_path,
@@ -223,17 +268,15 @@ pub fn load_project(root: impl AsRef<Path>) -> LoaderResult<MiniProgramProject> 
         }
     }
     if diagnostics.is_empty() {
-        Ok(MiniProgramProject {
-            root,
-            manifest,
+        Ok((
+            app_script_path.map_err(|diagnostic| LoaderError::InvalidProject {
+                diagnostics: vec![diagnostic],
+            })?,
+            app_style_path.map_err(|diagnostic| LoaderError::InvalidProject {
+                diagnostics: vec![diagnostic],
+            })?,
             pages,
-            app_script_path: app_script_path.map_err(|diagnostic| LoaderError::InvalidProject {
-                diagnostics: vec![diagnostic],
-            })?,
-            app_style_path: app_style_path.map_err(|diagnostic| LoaderError::InvalidProject {
-                diagnostics: vec![diagnostic],
-            })?,
-        })
+        ))
     } else {
         Err(LoaderError::InvalidProject { diagnostics })
     }
@@ -395,7 +438,10 @@ mod tests {
         assert_eq!(project.pages.len(), 1);
         assert_eq!(project.pages[0].route, "pages/home/index");
         assert!(project.pages[0].style_path.is_none());
-        assert_eq!(project.app_script_path, temporary.join("app.js"));
+        assert_eq!(
+            project.app_script_path.file_name(),
+            Some(std::ffi::OsStr::new("app.js"))
+        );
 
         fs::remove_dir_all(temporary)?;
         Ok(())
@@ -408,9 +454,8 @@ mod tests {
         fs::write(temporary.join("app.json"), r#"{"pages":["../outside"]}"#)?;
         fs::write(temporary.join("app.js"), "App({});")?;
 
-        let error = match load_project(&temporary) {
-            Ok(_) => return Err("unsafe route unexpectedly loaded".into()),
-            Err(error) => error,
+        let Err(error) = load_project(&temporary) else {
+            return Err("unsafe route unexpectedly loaded".into());
         };
         let diagnostics = match error {
             LoaderError::InvalidProject { diagnostics } => diagnostics,
@@ -427,15 +472,40 @@ mod tests {
     }
 
     #[test]
+    fn rejects_entry_page_not_registered_in_app_json() -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = temporary_directory("entry-page");
+        fs::create_dir_all(&temporary)?;
+        fs::write(
+            temporary.join("app.json"),
+            r#"{"pages":["pages/home/index"],"entryPagePath":"pages/unknown/index"}"#,
+        )?;
+
+        let error = match load_project(&temporary) {
+            Ok(_) => return Err("unknown entry page unexpectedly loaded".into()),
+            Err(error) => error,
+        };
+        let diagnostics = match error {
+            LoaderError::InvalidProject { diagnostics } => diagnostics,
+            other => return Err(other.to_string().into()),
+        };
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == DiagnosticKind::InvalidManifest
+                && diagnostic.message.contains("entryPagePath")
+        }));
+
+        fs::remove_dir_all(temporary)?;
+        Ok(())
+    }
+
+    #[test]
     fn includes_json_line_and_column_for_invalid_manifest() -> Result<(), Box<dyn std::error::Error>>
     {
         let temporary = temporary_directory("json");
         fs::create_dir_all(&temporary)?;
         fs::write(temporary.join("app.json"), "{\n  invalid\n}")?;
 
-        let error = match load_project(&temporary) {
-            Ok(_) => return Err("invalid JSON unexpectedly loaded".into()),
-            Err(error) => error,
+        let Err(error) = load_project(&temporary) else {
+            return Err("invalid JSON unexpectedly loaded".into());
         };
         let diagnostics = match error {
             LoaderError::InvalidProject { diagnostics } => diagnostics,

@@ -1,0 +1,19 @@
+[package]
+name = "sdkwork-miniprogram-headless-renderer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Source-mapped structural Render Tree for headless mini-program inspection"
+
+[lib]
+name = "sdkwork_miniprogram_headless_renderer"
+path = "src/lib.rs"
+
+[dependencies]
+sdkwork-miniprogram-wxml-compiler.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

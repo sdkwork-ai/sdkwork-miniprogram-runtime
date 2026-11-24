@@ -2,6 +2,7 @@ use crate::Span;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt};
 
+/// Result type returned by the WXML parser.
 pub type ParseResult<T> = Result<T, Diagnostic>;
 
 /// Classification for a structural WXML parse failure.

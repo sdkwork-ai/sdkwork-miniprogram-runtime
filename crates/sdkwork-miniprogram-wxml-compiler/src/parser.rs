@@ -4,6 +4,11 @@ use crate::{
 };
 
 /// Parse one WXML source file, reporting the first structural error.
+///
+/// # Errors
+///
+/// Returns a source-located diagnostic when the document contains malformed
+/// tags, attributes, comments, or interpolation delimiters.
 pub fn parse(file: impl Into<String>, source: &str) -> ParseResult<Document> {
     Parser::new(file.into(), source).parse_document()
 }
@@ -77,7 +82,7 @@ impl<'a> Parser<'a> {
             } else if self.starts_with("{{") {
                 children.push(self.parse_interpolation()?);
             } else {
-                children.push(self.parse_text()?);
+                children.push(self.parse_text());
             }
         }
     }
@@ -141,7 +146,7 @@ impl<'a> Parser<'a> {
 
     fn parse_attribute_value(&mut self) -> ParseResult<AttributeValue> {
         let quote = match self.peek_char() {
-            Some('\'') | Some('"') => self.advance_char().unwrap_or('\0'),
+            Some('\'' | '"') => self.advance_char().unwrap_or('\0'),
             Some('>') | None => {
                 return self.error(
                     DiagnosticKind::InvalidAttribute,
@@ -213,15 +218,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_text(&mut self) -> ParseResult<Node> {
+    fn parse_text(&mut self) -> Node {
         let start = self.offset;
         while !self.is_eof() && self.peek_char() != Some('<') && !self.starts_with("{{") {
             self.advance_char();
         }
-        Ok(Node::Text {
+        Node::Text {
             value: self.source[start..self.offset].to_owned(),
             span: self.span(start, self.offset),
-        })
+        }
     }
 
     fn parse_interpolation(&mut self) -> ParseResult<Node> {
@@ -463,9 +468,8 @@ mod tests {
         let document = parse("pages/home/index.wxml", "你好\n<view>世界</view>")?;
         assert!(matches!(&document.children[0], Node::Text { value, .. } if value == "你好\n"));
 
-        let diagnostic = match parse("pages/broken.wxml", "<view>\n <text></view>") {
-            Err(diagnostic) => diagnostic,
-            Ok(_) => return Err("mismatched tag was accepted".into()),
+        let Err(diagnostic) = parse("pages/broken.wxml", "<view>\n <text></view>") else {
+            return Err("mismatched tag was accepted".into());
         };
         assert_eq!(diagnostic.file, "pages/broken.wxml");
         assert_eq!(diagnostic.kind, DiagnosticKind::MismatchedClosingTag);
@@ -529,9 +533,8 @@ mod tests {
             AttributeValue::Expression(_)
         ));
 
-        let error = match parse("inline.wxml", "<view value=\"{{ unresolved\"/>") {
-            Err(error) => error,
-            Ok(_) => return Err("unterminated attribute interpolation was accepted".into()),
+        let Err(error) = parse("inline.wxml", "<view value=\"{{ unresolved\"/>") else {
+            return Err("unterminated attribute interpolation was accepted".into());
         };
         assert_eq!(error.kind, DiagnosticKind::UnterminatedInterpolation);
         Ok(())

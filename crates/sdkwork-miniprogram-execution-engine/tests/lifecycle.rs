@@ -1,3 +1,5 @@
+//! Public lifecycle and application isolation acceptance tests.
+
 use sdkwork_miniprogram_execution_engine::{
     ApplicationManifest, ApplicationState, ResourceBudget, Runtime, RuntimeBuilder, RuntimeConfig,
     RuntimeError,
@@ -17,11 +19,13 @@ fn runtime() -> Result<Runtime, RuntimeError> {
 }
 
 #[test]
-fn runtime_configuration_rejects_zero_resource_ceilings() -> Result<(), RuntimeError> {
-    let mut config = RuntimeConfig::default();
-    config.resource_budget = ResourceBudget {
-        max_applications: 0,
-        ..ResourceBudget::default()
+fn runtime_configuration_rejects_zero_resource_ceilings() {
+    let config = RuntimeConfig {
+        resource_budget: ResourceBudget {
+            max_applications: 0,
+            ..ResourceBudget::default()
+        },
+        ..RuntimeConfig::default()
     };
     let result = RuntimeBuilder::new().config(config).build();
     assert!(matches!(
@@ -31,7 +35,6 @@ fn runtime_configuration_rejects_zero_resource_ceilings() -> Result<(), RuntimeE
             ..
         })
     ));
-    Ok(())
 }
 
 #[test]
@@ -88,9 +91,14 @@ fn manifest_rejects_path_traversal_and_unknown_entry_page() -> Result<(), Runtim
 
 #[test]
 fn runtime_enforces_application_and_storage_limits() -> Result<(), RuntimeError> {
-    let mut config = RuntimeConfig::default();
-    config.resource_budget.max_applications = 1;
-    config.resource_budget.max_storage_entries_per_application = 1;
+    let config = RuntimeConfig {
+        resource_budget: ResourceBudget {
+            max_applications: 1,
+            max_storage_entries_per_application: 1,
+            ..ResourceBudget::default()
+        },
+        ..RuntimeConfig::default()
+    };
     let runtime = RuntimeBuilder::new().config(config).build()?;
     let first = runtime.load_application(manifest("first"))?;
     let second_result = runtime.load_application(manifest("second"));

@@ -6,13 +6,13 @@
     "displayName": "SDKWork Mini Program WXML Compiler",
     "version": "0.1.0",
     "type": "rust-crate",
-    "root": "crates/sdkwork-miniprogram-wxml-compiler",
-    "domain": "runtime",
+    "root": "sdkwork-miniprogram-runtime/crates/sdkwork-miniprogram-wxml-compiler",
+    "domain": "mini-program-runtime",
     "capability": "wxml",
     "surface": "host-native",
     "languages": ["rust"],
     "generated": false,
-    "manifests": ["Cargo.toml"]
+    "manifests": ["Cargo.toml", "specs/component.spec.json"]
   },
   "canonicalSpecs": [
     {
@@ -27,9 +27,11 @@
     }
   ],
   "contracts": {
-    "layerRole": "runtime-composition",
+    "layerRole": "compiler",
     "publicExports": ["parse", "Document", "Node", "Element", "Attribute", "Diagnostic"],
-    "runtimeEntrypoints": [],
+    "providedPorts": [{ "name": "wxmlSyntaxTree", "export": "parse" }],
+    "requiredPorts": [],
+    "runtimeEntrypoints": ["parse"],
     "routeManifest": null,
     "sdkClients": [],
     "sdkDependencies": [],
